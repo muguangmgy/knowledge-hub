@@ -1,0 +1,46 @@
+---
+description: Knowledge Hub 项目介绍与目录结构
+alwaysApply: true
+---
+
+# 项目介绍
+
+**Knowledge Hub**（knowledge-qa）：企业文档入库后的可问答知识库。
+
+主链路：上传（pdf/docx/md/txt）→ 解析切分 → Embedding → Chroma → 对话检索 → 依据不足拒答，否则一次 LLM 带引用生成。
+
+| 层 | 栈 |
+|----|-----|
+| 前端 | Vue 3 + Vite + Pinia + Element Plus + Axios（`:5173`） |
+| 后端 | FastAPI + SQLAlchemy + MySQL（`:8000`） |
+| 向量 / 模型 | Chroma（本地）+ SiliconFlow（`OpenAIEmbeddings` / `ChatOpenAI`） |
+
+规格与阶段文档在 `.docs/`；行为回归脚本在 `scripts/`。
+
+# 目录结构
+
+```
+knowledge-hub/
+├── .docs/                    # 设计总览 + phase1–4
+├── scripts/                  # verify_phase*.py 回归
+├── backend/
+│   ├── .env / requirements.txt / .venv
+│   ├── data/kb/ · data/chroma/
+│   └── app/
+│       ├── main.py           # 入口、lifespan、CORS、挂路由
+│       ├── api/              # HTTP 路由（auth / documents / chat）
+│       ├── services/         # 业务（auth / ingest / chat / qa）
+│       ├── common/           # config、db、errors、response、chroma
+│       ├── models/ · schemas/
+│       ├── auth/             # deps、security、seed
+│       ├── ingest/           # parser、chunker
+│       ├── rag/              # embedding、chroma_store、retriever
+│       └── llm/              # 对话补全客户端
+└── frontend/src/
+    ├── main.js · App.vue · assets/css/
+    ├── api/ · stores/ · router/
+    ├── views/                # auth、documents、chat
+    └── components/           # ingest、chat
+```
+
+改代码时落到对应模块；新能力优先扩展现有包，勿平行另起一套目录。

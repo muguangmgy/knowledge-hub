@@ -1,0 +1,42 @@
+---
+description: Vue3 前端 api/store/view 约定
+globs: frontend/src/**/*.{js,vue}
+alwaysApply: false
+---
+
+# Frontend（Vue 3）
+
+栈：Vue 3 + Vite + **JavaScript**（非 TS）+ Pinia + Element Plus + Axios。开发端口 **5173**；`VITE_API_BASE` 默认为空，靠 Vite 把 `/api` 代理到 `127.0.0.1:8000`。
+
+## 结构
+
+- `api/*`：纯 HTTP；`stores/*`：状态编排；`views` 薄；复用进 `components/`
+- 页面：`views/auth`（登录/注册）、`documents`、`chat`
+- Token：`localStorage` 键 `kh_token`；经 `api/http.js` 读写
+
+## 路由
+
+- 公开页：`/login`、`/register`（`meta.public`）
+- 需登录：`/chat`、`/documents`；无 Token → `/login?redirect=...`
+- 默认 `/` → `/chat`
+
+## HTTP
+
+- 一律走 `api/http.js`（Bearer、`code !== 0` 拒绝、401/`40101` 清 Token 跳登录）
+- 字段 **camelCase**（`accessToken`、`conversationId`）
+- 超时：入库 `600000`；问答 `120000`；勿假装超时成功
+
+```js
+// ❌ BAD：页面裸 axios
+axios.post('/api/chat', body)
+
+// ✅ GOOD
+import { askChat } from '../api/chat'
+await askChat({ message, conversationId })
+```
+
+## 交互
+
+- 登出：只清 Token（无后端 logout）
+- 「新对话」：只清本地 `conversationId` / messages
+- 错误提示用后端 `message`；避免空 catch

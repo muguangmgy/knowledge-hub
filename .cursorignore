@@ -1,0 +1,27 @@
+﻿# Python
+backend/.venv/
+.venv/
+venv/
+**/__pycache__/
+**/*.pyc
+**/.pytest_cache/
+**/.coverage
+**/htmlcov/
+**/*.egg-info/
+
+# Node / frontend
+frontend/node_modules/
+node_modules/
+frontend/dist/
+build/
+
+# Backend runtime / vector store / uploads
+backend/data/chroma/
+backend/uploads/
+
+# Logs / OS / IDE clutter
+*.log
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
