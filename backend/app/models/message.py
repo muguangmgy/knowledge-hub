@@ -1,5 +1,3 @@
-"""消息 kh_message；citations 仅存短摘录字段（Phase 4）。"""
-
 from datetime import datetime
 from typing import Any
 

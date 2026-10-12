@@ -1,5 +1,3 @@
-"""文本切分：按字符窗 max≈800 / overlap≈100；有 Markdown 标题则带 heading_path。"""
-
 from __future__ import annotations
 
 import re

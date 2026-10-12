@@ -1,5 +1,3 @@
-"""问答生成：组 prompt、调 LLM；citations 与 Top-K 顺序对齐（[n]）。"""
-
 from __future__ import annotations
 
 from app.llm.client import chat_completion

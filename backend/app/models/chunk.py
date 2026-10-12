@@ -1,5 +1,3 @@
-"""文档切片 kh_chunk；chroma_id 格式为 {document_id}_{chunk_index}。"""
-
 from datetime import datetime
 
 from sqlalchemy import BigInteger, DateTime, Integer, String, Text, func

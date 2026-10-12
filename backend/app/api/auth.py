@@ -1,5 +1,3 @@
-"""认证路由：/api/auth/register|login|me。无后端 logout（前端清 Token）。"""
-
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 

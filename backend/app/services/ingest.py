@@ -1,9 +1,3 @@
-"""文档入库 / 列表 / 删除业务。
-
-入库：先解析切分 Embedding，再写库落盘，最后写 Chroma；失败回滚。
-删除：先 Chroma，成功后再清 MySQL 与文件。
-"""
-
 from __future__ import annotations
 
 import shutil

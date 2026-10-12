@@ -1,8 +1,3 @@
-"""鉴权依赖：Bearer JWT → 查库确认用户存在且 ACTIVE。
-
-业务 API（Phase 3/4）统一 Depends(get_current_user)；本版不按 permission 拦截。
-"""
-
 from fastapi import Depends
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select

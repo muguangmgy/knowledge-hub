@@ -1,5 +1,3 @@
-"""RBAC：角色 / 权限 / 关联表。本版接口只验登录，权限码供 /me 查询。"""
-
 from datetime import datetime
 
 from sqlalchemy import BigInteger, DateTime, String, UniqueConstraint, func

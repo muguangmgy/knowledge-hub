@@ -1,5 +1,3 @@
-"""SiliconFlow 对话补全（ChatOpenAI / OpenAI 兼容）；失败 → 50010。"""
-
 from __future__ import annotations
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage

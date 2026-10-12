@@ -1,5 +1,3 @@
-"""认证请求体（Phase 2）。"""
-
 from pydantic import BaseModel, Field
 
 

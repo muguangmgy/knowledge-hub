@@ -1,5 +1,3 @@
-"""文档 API：上传 / 列表 / 详情 / 物理删除（共享库，需登录）。"""
-
 from fastapi import APIRouter, Depends, File, UploadFile
 from sqlalchemy.orm import Session
 

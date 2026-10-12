@@ -1,11 +1,3 @@
-"""RBAC 与默认 admin 幂等种子（lifespan 启动执行）。
-
-约定：
-- 角色/权限/关联不存在则插入；已存在则跳过
-- 用户 admin 已存在时不改密码、不重置角色绑定
-- admin/user 本版均关联同一套 api 权限码（接口仍只验登录，见主规格）
-"""
-
 import bcrypt
 from sqlalchemy import select
 from sqlalchemy.orm import Session

@@ -1,6 +1,3 @@
-"""业务异常与错误码（与设计文档 §9 对齐；HTTP 状态与业务 code 分离）。"""
-
-
 class AppError(Exception):
     """可映射为统一 JSON 响应的业务错误。"""
 

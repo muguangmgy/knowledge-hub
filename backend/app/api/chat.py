@@ -1,5 +1,3 @@
-"""问答与会话 API：POST /api/chat；/api/conversations 列表/详情/删除。"""
-
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session

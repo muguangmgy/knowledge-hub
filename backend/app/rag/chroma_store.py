@@ -1,5 +1,3 @@
-"""Chroma collection kh_chunks（cosine）；入库 upsert / 删除按 id。"""
-
 from __future__ import annotations
 
 from typing import Any

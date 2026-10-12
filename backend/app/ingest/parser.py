@@ -1,5 +1,3 @@
-"""文档解析：按扩展名提取纯文本（pdf/docx/md/txt）。"""
-
 from pathlib import Path
 
 import pymupdf

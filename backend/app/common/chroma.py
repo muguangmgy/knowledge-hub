@@ -1,8 +1,3 @@
-"""本地持久化 Chroma 客户端。
-
-Phase 1 只负责打开目录并探活；cosine collection（kh_chunks）在 Phase 3 入库时创建。
-"""
-
 from chromadb import PersistentClient
 from chromadb.api import ClientAPI
 

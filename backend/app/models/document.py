@@ -1,5 +1,3 @@
-"""文档元数据 kh_document：全员共享库，无 user_id / status；有行即入库成功。"""
-
 from datetime import datetime
 
 from sqlalchemy import BigInteger, DateTime, String, func

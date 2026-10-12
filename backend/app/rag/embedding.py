@@ -1,5 +1,3 @@
-"""SiliconFlow Embedding（OpenAIEmbeddings / BGE-M3）；失败重试后仍失败 → 入库 50001。"""
-
 from __future__ import annotations
 
 import time

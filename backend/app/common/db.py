@@ -1,5 +1,3 @@
-"""SQLAlchemy Engine / Session；ORM Base 供 models 与 create_all 使用。"""
-
 from collections.abc import Generator
 
 from sqlalchemy import create_engine, text

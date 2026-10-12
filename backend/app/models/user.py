@@ -1,5 +1,3 @@
-"""用户表 kh_user。角色经 kh_user_role 关联，不在本表存角色字段。"""
-
 from datetime import datetime
 
 from sqlalchemy import BigInteger, DateTime, String, func

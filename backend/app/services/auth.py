@@ -1,5 +1,3 @@
-"""认证业务：注册、登录、/me 资料聚合。"""
-
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 

@@ -1,5 +1,3 @@
-"""FastAPI 入口：CORS、lifespan、health、auth、documents、chat（Phase1–4）。"""
-
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI

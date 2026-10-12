@@ -1,5 +1,3 @@
-"""应用配置：从 backend/.env 加载；相对路径相对 backend 根目录解析。"""
-
 from functools import lru_cache
 from pathlib import Path
 

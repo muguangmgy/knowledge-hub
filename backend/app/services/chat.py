@@ -1,5 +1,3 @@
-"""会话与问答业务：懒建会话 → 检索 → 拒答或 LLM 生成。"""
-
 from __future__ import annotations
 
 from datetime import datetime

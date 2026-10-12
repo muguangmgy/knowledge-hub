@@ -1,5 +1,3 @@
-"""统一响应体：{ code, message, data }。业务成功固定 code=0。"""
-
 from typing import Any
 
 from fastapi.responses import JSONResponse

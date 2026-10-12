@@ -1,5 +1,3 @@
-"""ORM 模型汇总：导入本包即可注册全部表，供 lifespan create_all。"""
-
 from app.models.chunk import Chunk
 from app.models.conversation import Conversation
 from app.models.document import Document

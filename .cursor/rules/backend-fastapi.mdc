@@ -6,6 +6,11 @@ alwaysApply: false
 
 # Backend（FastAPI）
 
+## 文件头
+
+- 模块文件**不要**写文件首行 / 顶部模块级 docstring（如 `"""xxx"""`）
+- 函数、类上的 docstring 可按需保留
+
 ## 分层
 
 - `app/api/`：HTTP 路由，只做参数绑定 / Depends / 调 `services` / `ok()`

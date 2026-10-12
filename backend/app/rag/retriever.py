@@ -1,5 +1,3 @@
-"""向量检索：当前问题原文 → Embedding → Chroma Top-K（cosine distance）。"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass

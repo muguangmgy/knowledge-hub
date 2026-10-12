@@ -1,5 +1,3 @@
-"""会话 kh_conversation：归属用户；由 /api/chat 懒建（Phase 4）。"""
-
 from datetime import datetime
 
 from sqlalchemy import BigInteger, DateTime, String, func
