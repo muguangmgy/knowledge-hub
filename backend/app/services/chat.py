@@ -55,6 +55,18 @@ def delete_conversation(db: Session, user: User, conversation_id: int) -> None:
     db.commit()
 
 
+def update_conversation_title(
+    db: Session, user: User, conversation_id: int, title: str
+) -> dict:
+    """更新会话标题；非本人 → 40401。"""
+    conv = _get_owned_conversation(db, user, conversation_id)
+    conv.title = title[:512]
+    conv.updated_at = datetime.now()
+    db.commit()
+    db.refresh(conv)
+    return _conv_to_dict(conv)
+
+
 def ask(
     db: Session,
     user: User,

@@ -5,7 +5,7 @@ from app.auth.deps import get_current_user
 from app.common.db import get_db
 from app.common.response import ok
 from app.models.user import User
-from app.schemas.chat import ChatRequest
+from app.schemas.chat import ChatRequest, ConversationUpdateRequest
 from app.services import chat as chat_service
 
 router = APIRouter(tags=["chat"])
@@ -44,6 +44,21 @@ def get_conversation(
 ):
     """会话消息详情（仅本人）。"""
     return ok(chat_service.get_conversation_messages(db, user, conversation_id))
+
+
+@router.patch("/api/conversations/{conversation_id}")
+def update_conversation(
+    conversation_id: int,
+    body: ConversationUpdateRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """更新会话标题（仅本人）。"""
+    return ok(
+        chat_service.update_conversation_title(
+            db, user, conversation_id, body.title
+        )
+    )
 
 
 @router.delete("/api/conversations/{conversation_id}")

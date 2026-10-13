@@ -16,6 +16,11 @@ export function getConversation(id) {
   return http.get(`/api/conversations/${id}`)
 }
 
+/** PATCH /api/conversations/:id — 更新标题 */
+export function updateConversation(id, payload) {
+  return http.patch(`/api/conversations/${id}`, payload)
+}
+
 /** DELETE /api/conversations/:id */
 export function deleteConversation(id) {
   return http.delete(`/api/conversations/${id}`)

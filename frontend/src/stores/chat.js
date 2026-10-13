@@ -26,6 +26,19 @@ export const useChatStore = defineStore('chat', {
       this.conversationId = res.data.conversation.id
       this.messages = res.data.messages || []
     },
+    /** 重命名会话标题。 */
+    async renameConversation(id, title) {
+      await chatApi.updateConversation(id, { title })
+      await this.refreshConversations()
+    },
+    /** 删除会话；若正打开则清本地。 */
+    async removeConversation(id) {
+      await chatApi.deleteConversation(id)
+      this.conversations = this.conversations.filter((c) => c.id !== id)
+      if (this.conversationId === id) {
+        this.newChat()
+      }
+    },
     /** 提问：乐观插入 user，再追加 assistant（含 citations / rejected）。 */
     async ask(text) {
       this.asking = true
