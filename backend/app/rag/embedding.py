@@ -18,7 +18,9 @@ def embed_texts(texts: list[str]) -> list[list[float]]:
 
     settings = get_settings()
     if not settings.EMBEDDING_API_KEY:
-        raise AppError(ErrorCode.INGEST_FAILED, "未配置 EMBEDDING_API_KEY", http_status=500)
+        raise AppError(
+            ErrorCode.INGEST_FAILED, "未配置 EMBEDDING_API_KEY", http_status=500
+        )
 
     client = OpenAIEmbeddings(
         api_key=settings.EMBEDDING_API_KEY,

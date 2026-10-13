@@ -1,3 +1,4 @@
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -15,9 +16,26 @@ from app.common.response import fail, ok
 import app.models  # noqa: F401  # 导入以注册 ORM 元数据，供 create_all
 
 
+def _setup_app_logging() -> None:
+    """uvicorn 默认只配了 uvicorn.*，app.* 的 INFO 不会出现在控制台。"""
+    app_logger = logging.getLogger("app")
+    if app_logger.handlers:
+        return
+    handler = logging.StreamHandler()
+    handler.setFormatter(
+        logging.Formatter("%(levelname)s [%(name)s] %(message)s")
+    )
+    app_logger.addHandler(handler)
+    app_logger.setLevel(logging.INFO)
+    app_logger.propagate = False
+
+
+_setup_app_logging()
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    """启动顺序：探活 MySQL → 建表 → 幂等种子 → 打开 Chroma。任一步失败则进程起不来。"""
+    """启动：探活 MySQL → 建表 → 种子 → Chroma → BM25 全量重建。任一步失败则进程起不来。"""
     settings = get_settings()
     settings.kb_dir.mkdir(parents=True, exist_ok=True)
 
@@ -34,6 +52,16 @@ async def lifespan(_app: FastAPI):
         db.close()
 
     open_chroma(settings)
+
+    # BM25 索引从 MySQL 全量重建（与已入库切片对齐）
+    from app.rag import bm25_store
+
+    bm25_db = SessionLocal()
+    try:
+        bm25_store.rebuild_from_db(bm25_db)
+    finally:
+        bm25_db.close()
+
     yield
 
 

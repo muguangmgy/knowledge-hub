@@ -1,21 +1,14 @@
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.auth.deps import get_current_user
 from app.common.db import get_db
 from app.common.response import ok
 from app.models.user import User
+from app.schemas.chat import ChatRequest
 from app.services import chat as chat_service
 
 router = APIRouter(tags=["chat"])
-
-
-class ChatRequest(BaseModel):
-    """问答请求；conversationId 缺省则懒建会话。"""
-
-    message: str = Field(min_length=1)
-    conversationId: int | None = None
 
 
 @router.post("/api/chat")

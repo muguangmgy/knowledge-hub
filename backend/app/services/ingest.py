@@ -13,7 +13,7 @@ from app.ingest.chunker import chunk_text
 from app.ingest.parser import detect_file_type, parse_bytes
 from app.models.chunk import Chunk
 from app.models.document import Document
-from app.rag import chroma_store
+from app.rag import bm25_store, chroma_store
 from app.rag.embedding import embed_texts
 
 
@@ -119,6 +119,21 @@ def ingest_upload(db: Session, *, filename: str, data: bytes) -> dict:
             embeddings=embeddings,
             metadatas=metadatas,
         )
+        # BM25 与 Chroma 同步；内存索引，失败不回滚已成功入库
+        bm25_store.upsert_chunks(
+            [
+                {
+                    "chroma_id": row.chroma_id,
+                    "document_id": row.document_id,
+                    "chunk_id": row.id,
+                    "filename": safe_name,
+                    "title": title,
+                    "heading_path": row.heading_path,
+                    "content": row.content,
+                }
+                for row in chunk_rows
+            ]
+        )
         db.commit()
         db.refresh(document)
         return _doc_to_dict(document)
@@ -156,6 +171,8 @@ def delete_document(db: Session, document_id: int) -> None:
         raise AppError(
             ErrorCode.INTERNAL, f"Chroma 删除失败: {exc}", http_status=500
         ) from exc
+
+    bm25_store.remove_ids(chroma_ids)
 
     for c in chunks:
         db.delete(c)
