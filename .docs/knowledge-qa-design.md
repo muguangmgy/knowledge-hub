@@ -1,9 +1,9 @@
 # Knowledge Hub 知识问答 — 技术方案设计文档
 
-- **日期**：2026-10-12
-- **状态**：待批准
+- **日期**：2026-10-13
+- **状态**：待批准（RAG 链路已与实现对齐）
 - **作者**：项目组
-- **说明**：企业散落文档（PDF / docx / text / md）入库后的可问答知识库；问答管线为「向量检索 → 带引用生成」，答案强制引用来源。
+- **说明**：企业散落文档（PDF / docx / text / md）入库后的可问答知识库；问答管线为「混合检索 → Rerank → 带引用生成 / 规则拒答」，答案强制引用来源。
 
 **分阶段设计文档**（按 §10 拆分，实现时按阶段阅读）：
 
@@ -18,7 +18,7 @@
 
 ## 1. 项目定位
 
-Knowledge Hub（本功能短名 **knowledge-qa**）把企业文档变成可自然语言提问的知识库：用户上传文档 → 解析切分 → 索引 → 对话时向量检索 → 依据不足则拒答，否则一次 LLM 生成带引用的答案。
+Knowledge Hub（本功能短名 **knowledge-qa**）把企业文档变成可自然语言提问的知识库：用户上传文档 → 解析切分 → Embedding/BM25 索引 → 对话时混合检索与精排 → 依据不足则拒答，否则一次 LLM 生成带引用的答案。
 
 **目标能力**（实现分步见 §10）：
 
@@ -26,8 +26,8 @@ Knowledge Hub（本功能短名 **knowledge-qa**）把企业文档变成可自�
 - **RBAC 表结构**：用户 / 角色 / 权限及关联表；种子角色 `admin`、`user`；注册默认绑 `user`；业务 API **只验已登录 + ACTIVE**
 - 支持 PDF / **docx** / text / Markdown 入库与列表管理（**同步入库**）
 - **文档库 = 全员共享库**：任意已登录用户可上传 / 列表 / 详情 / 删除全库文档；问答检索范围 = 全库
-- **向量检索**（Chroma）→ **带引用生成**；答案必须标注来源；依据不足用规则/提示词拒答
-- 对话可带最近几条历史直接进生成 prompt；检索用当前用户消息原文
+- **混合检索**（Chroma 向量 + 内存 BM25 → RRF）→ **BGE Rerank 分数门控** → **带引用生成**；依据不足规则拒答
+- 对话可带最近几条历史直接进生成 prompt；**检索用当前用户消息原文**（不改写、不拼历史）
 
 **交付目标**：本地可启动前后端；启动后可用种子账号 **`admin` / `123456`** 登录；亦可注册新用户；RBAC 表与种子数据可查；上传→入库→带引用问答主链路可演示；依据不足时拒答。
 
@@ -41,12 +41,13 @@ Knowledge Hub（本功能短名 **knowledge-qa**）把企业文档变成可自�
 |----|------|------|
 | 前端 | Vue 3 + Vite + JavaScript + Element Plus + Pinia + Axios | 登录注册、知识库、对话与引用 |
 | 后端 | FastAPI + Uvicorn | REST；目录见 §2.3，模块见 §3 |
-| 问答管线 | 普通服务函数（`ChatOpenAI` / `OpenAIEmbeddings`） | **检索 → 生成** |
+| 问答管线 | 普通服务函数（`ChatOpenAI` / `OpenAIEmbeddings` + Rerank HTTP） | **混合检索 → Rerank → 生成/拒答** |
 | 关系库 | MySQL 8.0+ | 用户/RBAC、文档、chunk、会话（库名 `knowledge_hub`） |
 | 鉴权 | JWT（`JWT_*`）+ RBAC 表 | 注册登录发 Token；业务 API 验登录 |
-| 向量库 / 检索 | Chroma（本地目录） | `CHROMA_DIR`；向量检索 |
+| 向量库 / 检索 | Chroma + BM25（内存） | `CHROMA_DIR`；双路 → RRF → BGE Rerank |
 | LLM | SiliconFlow → `deepseek-ai/DeepSeek-V4-Flash` | 生成带引用答案 |
 | Embedding | SiliconFlow → `BAAI/bge-m3` | 切片向量化 |
+| Rerank | SiliconFlow → `BAAI/bge-reranker-v2-m3` | 精排；KEY/URL 空则回落 Embedding |
 | 解析 | pymupdf / python-docx / 原生读 md·text | 仅 pdf/docx/md/txt；切分见 §6.4 |
 | 依赖管理 | uv + `backend/requirements.txt` | 先包名安装，验证后锁版本 |
 | 密码哈希 | bcrypt | |
@@ -95,8 +96,14 @@ uv pip install -r requirements.txt
 | `JWT_SECRET_KEY` / `JWT_ALGORITHM` / `JWT_EXPIRE_HOURS` | Access Token；过期策略见 §3.2 |
 | `CORS_ORIGINS` | 默认 `http://localhost:5173` |
 | `INGEST_MAX_MB` | 上传硬上限（建议默认 **50**）；超过直接 `41301` |
-| `RAG_TOP_K` | 检索条数，默认 **8** |
-| `RAG_REJECT_MAX_DISTANCE` | 拒答：Top-1 **cosine distance** 大于该值则拒（建议默认 **0.55**，见 §6.2；用真实问答标定） |
+| `RAG_TOP_K` | 精排后最终给模型的片段条数，默认 **8** |
+| `RAG_HYBRID_PATH_TOP_K` | 向量 / BM25 各路召回与 RRF 融合条数，默认 **20** |
+| `RERANK_MODEL` / `RERANK_API_KEY` / `RERANK_BASE_URL` | 精排；KEY/URL 空则回落 Embedding；默认 `BAAI/bge-reranker-v2-m3` |
+| `RAG_RERANK_MIN_SCORE` | 精排软地板，默认 **0.05**（见 §6.2） |
+| `RAG_RERANK_RELATIVE_RATIO` | 精排相对落差：须 ≥ Top1×该比例，默认 **0.5** |
+| `RAG_RERANK_KEEP_TOP1_FLOOR` | 滤空时 Top1 兜底地板，默认 **0.15** |
+| `RAG_REJECT_MAX_DISTANCE` | 向量距离上限（仅 `filter_relevant` 调试用；正式问答不用） |
+| `RAG_RELATIVE_MAX_GAP` | 与 Top1 距离差（同上，调试用） |
 | （前端约定，非必须进 `.env`） | 入库 Axios `timeout` 建议 **600000**（10 分钟）；问答建议 **120000**（2 分钟） |
 
 前后端：Vite **5173** / FastAPI **8000**。CORS：`allow_origins` 读配置；`allow_headers` 含 `Authorization`；Token 在 **localStorage**（非 Cookie），`allow_credentials` 可 false。
@@ -158,7 +165,9 @@ knowledge-hub/
 │       ├── rag/
 │       │   ├── embedding.py     # OpenAIEmbeddings（SiliconFlow BGE-M3）
 │       │   ├── chroma_store.py
-│       │   └── retriever.py
+│       │   ├── bm25_store.py    # 内存 BM25（jieba；启动从 DB 重建）
+│       │   ├── retriever.py     # 双路召回 + RRF
+│       │   └── rerank.py        # BGE Rerank + 分数门控
 │       └── llm/
 │           └── client.py        # ChatOpenAI（SiliconFlow 对话）
 └── frontend/
@@ -240,18 +249,20 @@ knowledge-hub/
 
 ### 3.4 rag
 
-- Embedding（BGE-M3）+ Chroma 向量检索；Top-K 读 `RAG_TOP_K`（默认 8）
+- Embedding（BGE-M3）+ Chroma 向量与 BM25 双路召回，RRF 融合（各路与融合条数读 `RAG_HYBRID_PATH_TOP_K`，默认 20）
+- Rerank（BGE）取 `RAG_TOP_K`（默认 8），再按精排 **relevance_score** 做分数门控（见 §6.2）
+- BM25：进程内索引；启动 lifespan 从 MySQL 全量重建；入库/删除同步增删；分词 jieba + 英文小写
 - Collection **必须** `metadata={"hnsw:space": "cosine"}`（不用默认 `l2`；建后不可改，换空间须重建 collection）
-- `query` 返回的是 **distance**（越小越近；cosine 空间下约为 `1 - cosine_similarity`），不是越大越好的 similarity
+- `query` 返回的是 **distance**（越小越近）；正式拒答以精排分数为准，不用 distance 二次砍杀
 - `chroma_id`：`{document_id}_{chunk_index}`（删除文档时用）
-- 单 worker
+- 单 worker（多进程时各进程各自重建 BM25）
 
 ### 3.5 chat
 
 - **会话创建（chat 懒建）**：`conversationId` **可选**；缺省 / `null` 时由 `/api/chat` **自动** `INSERT kh_conversation`（归属当前用户），响应带回 `conversationId`；前端「新对话」只清本地状态
 - 已传 `conversationId`：校验 `conversation.user_id == current_user.id`，否则 `40401`
-- 流程：**向量检索 →（规则）依据是否足够 → 够则 LLM 生成带引用答案，不够则拒答**
-- 多轮：把最近几条历史**原文拼进**生成 prompt（可选）；检索用当前用户消息原文
+- 流程：**混合检索 → Rerank 分数门控 → 空则拒答，否则 LLM 带引用生成**
+- 多轮：最近几条历史**只拼进生成 prompt**；检索与精排均用当前用户消息原文
 
 ---
 
@@ -270,29 +281,30 @@ knowledge-hub/
   → 切分（§6.4）→ Embedding（内存中准备好 chunks）
   → INSERT kh_document（IntegrityError → 40901）→ 得到 documentId
   → 写 kh_chunk；落盘 KB_DIR/{document_id}/{filename}
-  → 【最后】写 Chroma（id=`{docId}_{idx}`）
+  → 【最后】写 Chroma（id=`{docId}_{idx}`）→ 同步 upsert 内存 BM25
   → 返回 documentId
 
 失败回滚（保持简单）：
   → 打日志；清临时文件
   → 若已写 Chroma：按已知 chroma_id 删除
-  → 若已落库：删 kh_chunk + 文件 + DELETE kh_document
+  → 若已落库：删 kh_chunk + 文件 + DELETE kh_document；并尽量同步删 BM25
   → 返回 50001
 ```
 
 说明：耗时长的解析/Embedding 在**入库存档之前**完成，失败时通常无库行可删。整条链路仍在**同一次上传 HTTP** 内同步完成；超时策略见 §7.4。进程被杀时最多残留临时文件（可忽略或手工清 `KB_DIR` 临时目录），**不会**因半成品行占住同名 UNIQUE。
 
-### 4.2 问答（检索 → 生成）
+### 4.2 问答（混合检索 → Rerank → 生成/拒答）
 
 ```
 message + 可选 conversationId（须已登录）
   → 无 conversationId：INSERT kh_conversation（user_id=当前用户）→ 得到 id
   → 有 conversationId：校验会话归属，否则 40401
   → 落库 user 消息；title 空则截断首问
-  → Chroma 检索（query = 当前用户消息原文）
-  → 规则：无命中或 Top-1 distance > RAG_REJECT_MAX_DISTANCE → 拒答话术（rejected=true），不调或少调 LLM
-  → 否则：历史最近几条（可选，如 6 条，不含当前）+ 当前问题 + 检索片段
-        → 一次 LLM 生成带 [n] 引用的答案
+  → 取最近 6 条历史（仅供生成，不进检索）
+  → 向量 + BM25 双路召回 → RRF 融合（RAG_HYBRID_PATH_TOP_K）
+  → Rerank（送入「标题 | 小节 + 正文」）取 RAG_TOP_K → 精排分数门控（§6.2）
+  → 门控后为空 → 拒答话术（rejected=true），不调 LLM
+  → 否则：历史 + 当前问题 + **精排后**片段 → 一次 LLM 生成带 [n] 引用的答案
   → 落库 assistant（含 citations）→ 返回（含 conversationId，供前端固定后续轮次）
 
 LLM 失败：若本请求已建会话/已落 user，保留之；可写一条失败说明 assistant，或仅返回 50010
@@ -306,7 +318,7 @@ LLM 失败：若本请求已建会话/已落 user，保留之；可写一条失�
 
 1. 查出该文档 `chroma_id` 列表
 2. `chroma.delete(ids=[...])` — **失败则整单失败**（`50000`），不删库行、不删文件；客户端可重试
-3. 成功后再：`DELETE kh_chunk` → 删 `KB_DIR` 文件 → `DELETE kh_document`
+3. 成功后再：`DELETE kh_chunk` → 删 `KB_DIR` 文件 → `DELETE kh_document` → 同步从内存 BM25 移除
 
 完成后同名可再上传。
 
@@ -318,6 +330,7 @@ lifespan：
   → create_all 建表（若不存在）
   → 执行 auth/seed.py（幂等）：角色/权限/关联 + 默认用户 admin
   → 打开 Chroma（目录不存在则创建）
+  → 从 MySQL 全量重建内存 BM25 索引
 ```
 
 种子失败则**启动失败**（演示依赖可登录的 `admin`）。`/api/health`：MySQL 可达；Chroma 可打开。
@@ -451,21 +464,31 @@ lifespan：
 ### 6.1 管线
 
 ```
-当前问题 → 向量检索 → 规则判断依据是否足够 → 拒答 或 一次 LLM 生成（带引用）
+当前问题
+  → 向量 + BM25 双路召回（各 RAG_HYBRID_PATH_TOP_K）
+  → RRF 融合
+  → BGE Rerank（文本=标题|小节+正文；取 RAG_TOP_K）
+  → 精排分数门控（§6.2）
+  → 为空则拒答；否则带精排后片段一次 LLM 生成（带引用）
 ```
 
-### 6.2 拒答规则（按 cosine distance）
+正式问答路径**不再**对精排结果做向量 distance 二次过滤（BM25 捞回的正确命中常有较大 distance，会被误杀）。
 
-比较对象：**仅** Chroma 返回的 Top-1 **distance**（越小越近）。按 distance 比较，勿按「相似度低于阈值」反方向写条件。
+### 6.2 拒答与精排分数门控
+
+拒答依据精排 `relevance_score`（约 0~1），不是 cosine distance。对 Rerank 返回的每条按序应用：
+
+1. **软地板**：`score < RAG_RERANK_MIN_SCORE` → 丢弃（挡近 0 噪声；默认 0.05）
+2. **相对落差**：`score < top1_score × RAG_RERANK_RELATIVE_RATIO` → 丢弃（默认比例 0.5）
+3. **Top1 兜底**：滤完为空且 `top1_score >= RAG_RERANK_KEEP_TOP1_FLOOR` → 至少保留 Top1（默认 0.15，避免短问误拒）
 
 | 条件 | 行为 |
 |------|------|
-| 检索结果为空 | 固定话术拒答，`rejected=true`，不调或少调 LLM |
-| Top-1 `distance` **>** `RAG_REJECT_MAX_DISTANCE` | 同上（依据不足） |
-| Top-1 `distance` **≤** 阈值 | 带 Top-K 片段进生成 |
+| 融合为空，或分数门控后为空 | 固定话术拒答，`rejected=true`，不调 LLM |
+| 门控后剩余 ≥1 条 | **仅**用剩余片段进生成与 citations |
 
-- 建议默认阈值 **0.55**（约等于 cosine similarity ≲ 0.45 时拒）；**实现后用几条「应拒 / 应答」样例标定**，写入 `.env`，勿写死魔法数在多处
-- 生成 prompt：只依据给定片段回答；无法依据则输出拒答，禁止编造（规则拒答为主，prompt 为辅）
+- `RAG_REJECT_MAX_DISTANCE` / `RAG_RELATIVE_MAX_GAP` 仅供 `filter_relevant` 调试/无精排场景，**正式 chat.ask 不调用**
+- 生成 prompt：只依据给定片段回答；禁止编造；勿输出「原文未完整」等元说明（规则拒答为主，prompt 为辅）
 
 ### 6.3 引用
 
@@ -481,8 +504,9 @@ lifespan：
 
 ### 6.5 多轮
 
-- 检索：用**当前用户消息原文**
-- 生成：可选把「当前之前最近 6 条」历史拼进 prompt
+- 检索 / 精排：用**当前用户消息原文**（不改写、不拼历史）
+- 生成：把「当前之前最近 6 条」历史拼进 prompt
+- 后续可选：多轮按需 query rewrite，改写结果只用于检索
 
 ---
 
@@ -507,7 +531,7 @@ lifespan：
 
 ### 7.3 通用
 
-- lifespan：MySQL **探测 1 次**失败即启动失败；`create_all` + **RBAC/默认 admin 种子**；打开 Chroma
+- lifespan：MySQL **探测 1 次**失败即启动失败；`create_all` + **RBAC/默认 admin 种子**；打开 Chroma；重建 BM25
 - 单 worker（长入库期间其它请求会排队）
 - 禁用用户：依赖层查库拦截
 
@@ -544,7 +568,7 @@ lifespan：
 - 非白名单类型（如 `.doc`）→ `42201`；空文档 / 纯图 PDF → `50001` 且同名可再传
 - **共享库**：用户 A 上传后，用户 B 可列表 / 删除 / 问答命中该文档
 - 会话越权 `40401`
-- 检索为空或 Top-1 distance 过大 → 拒答；距离足够则带引用问答（collection 为 cosine）
+- 融合为空或精排分数门控后为空 → 拒答；否则仅带精排后片段引用问答（collection 为 cosine）
 
 ---
 
@@ -590,7 +614,7 @@ lifespan：
 
 - SiliconFlow 限额与延迟
 - Chroma × Python 3.12.9；确认 `kh_chunks` 为 cosine（误建成 l2 须删目录重建）
-- `RAG_REJECT_MAX_DISTANCE` 默认 0.55 是否合适（应用真实问答标定）
+- `RAG_RERANK_MIN_SCORE` / `RELATIVE_RATIO` / `KEEP_TOP1_FLOOR` 默认是否合适（应用真实问答标定）
 - 切片 max/overlap 最终数（默认建议见 §6.4）
 - `INGEST_MAX_MB`（建议 50）与大文件实际入库耗时（是否常顶满 10 分钟）
 - 前端入库 / 问答 Axios timeout 是否与本地代理一致
@@ -601,7 +625,7 @@ lifespan：
 
 - [ ] 入库：先算完再落库；失败回滚；同名 → 40901
 - [ ] 物理删除：先 Chroma（失败整单失败）再库/文件
-- [ ] 问答为「检索→生成」；历史可直拼 prompt
+- [ ] 问答为「混合检索→Rerank→生成/拒答」；历史可直拼 prompt；检索用当前原文
 - [ ] Chroma 最后写；失败简单回滚
 - [ ] 切分按字符；无标题按段落滑窗；仅 pdf/docx/md/txt；无正文 → 50001
 - [ ] JWT + 注册/登录；RBAC 表；lifespan 幂等种子含 `admin`/`123456`；API 只验登录
@@ -609,7 +633,7 @@ lifespan：
 - [ ] 会话由 `/api/chat` 懒建；首条后响应带回 `conversationId`
 - [ ] 文档为全员共享库；会话仍仅本人
 - [ ] 同步长请求：入库 10min / 问答 2min timeout；前端 loading 与超时文案
-- [ ] Chroma `hnsw:space=cosine`；拒答用 Top-1 distance **>** `RAG_REJECT_MAX_DISTANCE`（默认 0.55）
+- [ ] Chroma `hnsw:space=cosine`；精排分数门控（软地板 + 相对落差 + Top1 兜底），滤完为空则拒
 
 **批准人：**  
 **批准日期：**  
@@ -626,8 +650,8 @@ lifespan：
 | 同步超时 | 入库 Axios 600s、问答 120s；前端长等待文案；网关超时对齐 |
 | 文档库 | 全员共享；`kh_document` 无 `user_id`、无 `status`；任意登录用户可列表/删/被检索 |
 | 删除 | 先 Chroma（失败整单失败）再 MySQL / 文件 |
-| 问答 | 检索 → 规则拒答/一次生成；检索全库 |
+| 问答 | 混合检索 → Rerank 分数门控 → 规则拒答/一次生成；检索全库 |
 | 会话 | chat 懒建；`conversationId` 可选；列表/删仅本人 |
-| 多轮 | 历史可选拼进 prompt；检索用当前原文 |
-| 检索 | Chroma 向量；collection cosine |
-| 拒答 | 空结果或 Top-1 distance > `RAG_REJECT_MAX_DISTANCE`（建议 0.55） |
+| 多轮 | 历史拼进生成 prompt；检索/精排用当前原文 |
+| 检索 | 向量 + BM25 → RRF → BGE Rerank；collection cosine |
+| 拒答 | 融合为空或精排分数门控后为空（软地板 0.05 + 相对 0.5 + Top1 兜底 0.15） |

@@ -63,6 +63,7 @@ backend/app/
 - **`title`**：文件名去扩展名
 - **路径**：`KB_DIR/{document_id}/{filename}`
 - **Chroma**：collection `kh_chunks`；`hnsw:space=cosine`；id = `{document_id}_{chunk_index}`；metadata：`document_id`、`chunk_id`、`heading_path`、`filename`
+- **BM25**：入库成功后同步写入内存索引；删除时同步移除（启动时从 MySQL 全量重建）
 
 ### 3.1 切片（§6.4）
 
@@ -85,7 +86,7 @@ backend/app/
   → 切分 → Embedding（内存准备 chunks）
   → INSERT kh_document（IntegrityError → 40901）→ documentId
   → 写 kh_chunk；落盘 KB_DIR/{document_id}/{filename}
-  → 【最后】写 Chroma
+  → 【最后】写 Chroma → 同步 upsert 内存 BM25
   → 返回 documentId
 
 失败回滚：

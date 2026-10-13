@@ -7,13 +7,13 @@ alwaysApply: true
 
 **Knowledge Hub**（knowledge-qa）：企业文档入库后的可问答知识库。
 
-主链路：上传（pdf/docx/md/txt）→ 解析切分 → Embedding → Chroma → 对话检索 → 依据不足拒答，否则一次 LLM 带引用生成。
+主链路：上传（pdf/docx/md/txt）→ 解析切分 → Embedding → Chroma + BM25 → 向量/BM25 双路 RRF → BGE Rerank 分数门控 → 依据不足拒答，否则一次 LLM 带引用生成。
 
 | 层 | 栈 |
 |----|-----|
 | 前端 | Vue 3 + Vite + Pinia + Element Plus + Axios（`:5173`） |
 | 后端 | FastAPI + SQLAlchemy + MySQL（`:8000`） |
-| 向量 / 模型 | Chroma（本地）+ SiliconFlow（`OpenAIEmbeddings` / `ChatOpenAI`） |
+| 向量 / 模型 | Chroma（本地）+ 内存 BM25 + SiliconFlow（Embedding / Rerank / Chat） |
 
 规格与阶段文档在 `.docs/`；行为回归脚本在 `scripts/`。
 
@@ -34,7 +34,7 @@ knowledge-hub/
 │       ├── models/ · schemas/
 │       ├── auth/             # deps、security、seed
 │       ├── ingest/           # parser、chunker
-│       ├── rag/              # embedding、chroma_store、retriever
+│       ├── rag/              # embedding、chroma_store、bm25_store、retriever、rerank
 │       └── llm/              # 对话补全客户端
 └── frontend/src/
     ├── main.js · App.vue · assets/css/
