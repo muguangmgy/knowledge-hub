@@ -2,6 +2,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.auth.security import create_access_token, hash_password, verify_password
+from app.common.audit import actor_scope
 from app.common.errors import AppError, ErrorCode
 from app.models.rbac import Permission, Role, RolePermission, UserRole
 from app.models.user import User
@@ -28,8 +29,12 @@ def register_user(db: Session, *, username: str, password: str) -> User:
     )
     db.add(user)
     db.flush()
-    db.add(UserRole(user_id=user.id, role_id=role.id))
-    db.commit()
+    # 自指：flush 拿到 id 后再设操作人，审计监听器补 User / UserRole
+    with actor_scope(user.id):
+        user.created_by = user.id
+        user.updated_by = user.id
+        db.add(UserRole(user_id=user.id, role_id=role.id))
+        db.commit()
     db.refresh(user)
     return user
 

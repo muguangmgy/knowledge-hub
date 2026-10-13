@@ -4,6 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.auth.security import decode_access_token
+from app.common.audit import set_actor_id
 from app.common.db import get_db
 from app.common.errors import AppError, ErrorCode
 from app.models.user import User
@@ -33,4 +34,5 @@ def get_current_user(
     user = db.scalar(select(User).where(User.id == user_id))
     if user is None or user.status != "ACTIVE":
         raise AppError(ErrorCode.UNAUTHORIZED, "未登录或 Token 无效", http_status=401)
+    set_actor_id(user.id)  # flush 时自动填 created_by / updated_by
     return user

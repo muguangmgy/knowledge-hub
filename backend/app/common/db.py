@@ -3,6 +3,7 @@ from collections.abc import Generator
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
+from app.common.audit import clear_actor_id, register_audit_listeners
 from app.common.config import get_settings
 
 
@@ -19,6 +20,7 @@ engine = create_engine(
     pool_recycle=3600,
 )
 SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
+register_audit_listeners()
 
 
 def get_db() -> Generator[Session, None, None]:
@@ -27,6 +29,7 @@ def get_db() -> Generator[Session, None, None]:
     try:
         yield db
     finally:
+        clear_actor_id()
         db.close()
 
 

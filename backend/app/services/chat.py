@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.common.audit import touch
 from app.common.config import get_settings
 from app.common.errors import AppError, ErrorCode
 from app.models.conversation import Conversation
@@ -61,7 +61,7 @@ def update_conversation_title(
     """更新会话标题；非本人 → 40401。"""
     conv = _get_owned_conversation(db, user, conversation_id)
     conv.title = title[:512]
-    conv.updated_at = datetime.now()
+    touch(conv)
     db.commit()
     db.refresh(conv)
     return _conv_to_dict(conv)
@@ -126,6 +126,7 @@ def ask(
         conv = _get_owned_conversation(db, user, conversation_id)
         if not conv.title:
             conv.title = question[:40]
+        touch(conv)
         logger.info(
             "[问答·会话] 复用 id=%s title=%r", conv.id, conv.title
         )
@@ -250,6 +251,7 @@ def ask(
                 citations=None,
             )
             db.add(fail_msg)
+            touch(conv)
             db.commit()
             raise
 
@@ -261,7 +263,7 @@ def ask(
         citations=citations or None,  # 拒答时为空列表 → 存 NULL
     )
     db.add(assistant)
-    conv.updated_at = datetime.now()
+    touch(conv)
     db.commit()
 
     logger.info(

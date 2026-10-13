@@ -2,6 +2,7 @@ import bcrypt
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.common.audit import actor_scope
 from app.models.rbac import Permission, Role, RolePermission, UserRole
 from app.models.user import User
 
@@ -71,6 +72,14 @@ def _ensure_user_role(db: Session, user_id: int, role_id: int) -> None:
         db.add(UserRole(user_id=user_id, role_id=role_id))
 
 
+def _stamp_actor(row, actor_id: int) -> None:
+    """历史行若尚无审计人，回写为 actor。"""
+    if getattr(row, "created_by", None) is None:
+        row.created_by = actor_id
+    if getattr(row, "updated_by", None) is None:
+        row.updated_by = actor_id
+
+
 def run_seed(db: Session) -> None:
     """幂等写入角色/权限/关联与默认 admin；已存在用户不改密码。"""
     roles = {
@@ -79,10 +88,6 @@ def run_seed(db: Session) -> None:
     permissions = [
         _get_or_create_permission(db, code, name) for code, name in SEED_PERMISSIONS
     ]
-
-    for role in roles.values():
-        for perm in permissions:
-            _ensure_role_permission(db, role.id, perm.id)
 
     admin_user = db.scalar(select(User).where(User.username == ADMIN_USERNAME))
     if admin_user is None:
@@ -94,5 +99,20 @@ def run_seed(db: Session) -> None:
         db.add(admin_user)
         db.flush()
 
-    _ensure_user_role(db, admin_user.id, roles["admin"].id)
-    db.commit()
+    actor_id = admin_user.id
+    with actor_scope(actor_id):
+        _stamp_actor(admin_user, actor_id)
+        for role in roles.values():
+            _stamp_actor(role, actor_id)
+            for perm in permissions:
+                _stamp_actor(perm, actor_id)
+                _ensure_role_permission(db, role.id, perm.id)
+
+        _ensure_user_role(db, admin_user.id, roles["admin"].id)
+
+        for row in db.scalars(select(UserRole)).all():
+            _stamp_actor(row, actor_id)
+        for row in db.scalars(select(RolePermission)).all():
+            _stamp_actor(row, actor_id)
+
+        db.commit()
