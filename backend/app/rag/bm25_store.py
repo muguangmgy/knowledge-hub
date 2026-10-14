@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import logging
 import threading
 from dataclasses import dataclass
 
@@ -11,8 +10,6 @@ from sqlalchemy.orm import Session
 
 from app.models.chunk import Chunk
 from app.models.document import Document
-
-logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -98,7 +95,6 @@ def rebuild_from_db(db: Session) -> int:
         _by_id = by_id
         _rebuild_locked()
 
-    logger.info("[BM25·重建] 切片数=%s", len(entries))
     return len(entries)
 
 
@@ -137,7 +133,6 @@ def upsert_chunks(
                 _entries.append(entry)
                 _by_id[cid] = entry
         _rebuild_locked()
-    logger.info("[BM25·写入] 新增=%s 当前总数=%s", len(items), len(_entries))
 
 
 def remove_ids(chroma_ids: list[str]) -> None:
@@ -151,7 +146,6 @@ def remove_ids(chroma_ids: list[str]) -> None:
         for cid in id_set:
             _by_id.pop(cid, None)
         _rebuild_locked()
-    logger.info("[BM25·删除] 移除=%s 当前总数=%s", len(id_set), len(_entries))
 
 
 def search(query: str, *, top_k: int) -> list[Bm25Hit]:
@@ -168,7 +162,6 @@ def search(query: str, *, top_k: int) -> list[Bm25Hit]:
         if _bm25 is None or not _entries:
             return []
         scores = _bm25.get_scores(tokens)
-        # 取分最高的 top_k（分数为 0 的也截断掉）
         ranked = sorted(
             ((float(scores[i]), _entries[i]) for i in range(len(_entries))),
             key=lambda x: x[0],
@@ -192,15 +185,4 @@ def search(query: str, *, top_k: int) -> list[Bm25Hit]:
         )
         if len(hits) >= top_k:
             break
-
-    logger.info(
-        "[检索·BM25·结果] 问题=%r 分词=%s 命中=%s 请求条数=%s "
-        "ids=%s 分数=%s",
-        query,
-        tokens,
-        len(hits),
-        top_k,
-        [h.chroma_id for h in hits],
-        [round(h.score, 4) for h in hits],
-    )
     return hits

@@ -14,6 +14,8 @@
 | 3 文档入库与删除 | [phase/knowledge-qa-phase3-design.md](./phase/knowledge-qa-phase3-design.md) |
 | 4 问答与前端 | [phase/knowledge-qa-phase4-design.md](./phase/knowledge-qa-phase4-design.md) |
 
+**相关文档**：[chat-dual-mode-design.md](./chat-dual-mode-design.md)（双模式：知识库问答 `rag` / 自由对话 `direct`）
+
 ---
 
 ## 1. 项目定位
@@ -27,7 +29,7 @@ Knowledge Hub（本功能短名 **knowledge-qa**）把企业文档变成可自�
 - 支持 PDF / **docx** / text / Markdown 入库与列表管理（**同步入库**）
 - **文档库 = 全员共享库**：任意已登录用户可上传 / 列表 / 详情 / 删除全库文档；问答检索范围 = 全库
 - **混合检索**（Chroma 向量 + 内存 BM25 → RRF）→ **BGE Rerank 分数门控** → **带引用生成**；依据不足规则拒答
-- 对话可带最近几条历史直接进生成 prompt；**检索用当前用户消息原文**（不改写、不拼历史）
+- **rag 生成不带历史**；仅 **direct** 模式带最近 6 条历史（见 [chat-dual-mode-design.md](./chat-dual-mode-design.md)）；**检索用当前用户消息原文**（不改写、不拼历史）
 
 **交付目标**：本地可启动前后端；启动后可用种子账号 **`admin` / `123456`** 登录；亦可注册新用户；RBAC 表与种子数据可查；上传→入库→带引用问答主链路可演示；依据不足时拒答。
 
@@ -39,7 +41,7 @@ Knowledge Hub（本功能短名 **knowledge-qa**）把企业文档变成可自�
 
 | 层 | 选型 | 说明 |
 |----|------|------|
-| 前端 | Vue 3 + Vite + JavaScript + Element Plus + Pinia + Axios | 登录注册、知识库、对话与引用 |
+| 前端 | Vue 3 + Vite + JavaScript + Element Plus + Pinia + Axios | 登录注册、知识库；知识库问答 `/chat/rag`、自由对话 `/chat/direct` |
 | 后端 | FastAPI + Uvicorn | REST；目录见 §2.3，模块见 §3 |
 | 问答管线 | 普通服务函数（`ChatOpenAI` / `OpenAIEmbeddings` + Rerank HTTP） | **混合检索 → Rerank → 生成/拒答** |
 | 关系库 | MySQL 8.0+ | 用户/RBAC、文档、chunk、会话（库名 `knowledge_hub`） |
@@ -116,6 +118,7 @@ uv pip install -r requirements.txt
 knowledge-hub/
 ├── .docs/
 │   ├── knowledge-qa-design.md
+│   ├── chat-dual-mode-design.md
 │   └── phase/
 │       ├── knowledge-qa-phase1-design.md
 │       ├── knowledge-qa-phase2-design.md
@@ -188,7 +191,8 @@ knowledge-hub/
         ├── stores/
         │   ├── user.js
         │   ├── document.js
-        │   └── chat.js
+        │   ├── chat.js              # 知识库问答
+        │   └── directChat.js        # 自由对话
         ├── views/
         │   ├── auth/
         │   │   ├── LoginView.vue
@@ -196,7 +200,8 @@ knowledge-hub/
         │   ├── documents/
         │   │   └── DocumentListView.vue
         │   └── chat/
-        │       └── ChatView.vue
+        │       ├── ChatView.vue          # 知识库问答 /chat/rag
+        │       └── DirectChatView.vue    # 自由对话 /chat/direct
         ├── components/
         │   ├── ingest/
         │   │   └── UploadPanel.vue
@@ -215,7 +220,7 @@ knowledge-hub/
 | 前端 | Node v24.15.0；`npm run dev` → 5173 |
 | Token | **localStorage** + `Authorization: Bearer`（JWT） |
 | Token 过期 | 401 → 清 Token → 跳登录 |
-| 页面 | 登录、注册、文档管理、对话 |
+| 页面 | 登录、注册、文档管理；知识库问答 `/chat/rag`、自由对话 `/chat/direct` |
 | 同名文件 | **拒绝上传**；删除为**物理删除**（先 Chroma 再库/文件，见 §4.3）后再传 |
 
 ---
@@ -228,7 +233,7 @@ knowledge-hub/
 
 ### 3.2 auth（JWT + RBAC）
 
-- **注册**：用户名 + 密码（**bcrypt** 哈希）→ 建 `kh_user` → 绑定角色 **`user`**（`kh_user_role`）
+- **注册**：用户名 + 密码（**bcrypt** 哈希）→ 建 `sys_user` → 绑定角色 **`user`**（`sys_user_role`）
 - **登录**：校验密码且 `status=ACTIVE` → **PyJWT** 签发 access token（`JWT_EXPIRE_HOURS`，默认 24）→ 返回 Token + 用户基本信息
 - **鉴权依赖 `deps.py`**：解析 JWT → **再查库**用户存在且 `ACTIVE`，否则 `40101`
 - **RBAC**：五表结构 + 种子数据（见 §5.1.1）；接口只校验已登录
@@ -259,10 +264,10 @@ knowledge-hub/
 
 ### 3.5 chat
 
-- **会话创建（chat 懒建）**：`conversationId` **可选**；缺省 / `null` 时由 `/api/chat` **自动** `INSERT kh_conversation`（归属当前用户），响应带回 `conversationId`；前端「新对话」只清本地状态
-- 已传 `conversationId`：校验 `conversation.user_id == current_user.id`，否则 `40401`
-- 流程：**混合检索 → Rerank 分数门控 → 空则拒答，否则 LLM 带引用生成**
-- 多轮：最近几条历史**只拼进生成 prompt**；检索与精排均用当前用户消息原文
+- **会话创建（chat 懒建）**：`conversationId` **可选**；缺省 / `null` 时由 `/api/chat` **自动** `INSERT conversation`（归属当前用户，含 `mode`），响应带回 `conversationId`；前端「新对话」只清本地状态
+- 已传 `conversationId`：校验 `conversation.user_id == current_user.id`，否则 `40401`；请求 `mode` 须与会话一致（见 [chat-dual-mode-design.md](./chat-dual-mode-design.md)）
+- **rag 流程**：**混合检索 → Rerank 分数门控 → 空则拒答，否则 LLM 带引用生成**（生成**不带**历史）；检索与精排均用当前用户消息原文
+- **direct**：跳过检索，生成带最近 6 条历史；详见 [chat-dual-mode-design.md](./chat-dual-mode-design.md)
 
 ---
 
@@ -279,38 +284,37 @@ knowledge-hub/
   → 读入内存或临时文件（title = 文件名去扩展名）
   → 解析 → 无有效正文？→ 清临时 → 50001
   → 切分（§6.4）→ Embedding（内存中准备好 chunks）
-  → INSERT kh_document（IntegrityError → 40901）→ 得到 documentId
-  → 写 kh_chunk；落盘 KB_DIR/{document_id}/{filename}
+  → INSERT document（IntegrityError → 40901）→ 得到 documentId
+  → 写 chunk；落盘 KB_DIR/{document_id}/{filename}
   → 【最后】写 Chroma（id=`{docId}_{idx}`）→ 同步 upsert 内存 BM25
   → 返回 documentId
 
 失败回滚（保持简单）：
   → 打日志；清临时文件
   → 若已写 Chroma：按已知 chroma_id 删除
-  → 若已落库：删 kh_chunk + 文件 + DELETE kh_document；并尽量同步删 BM25
+  → 若已落库：删 chunk + 文件 + DELETE document；并尽量同步删 BM25
   → 返回 50001
 ```
 
 说明：耗时长的解析/Embedding 在**入库存档之前**完成，失败时通常无库行可删。整条链路仍在**同一次上传 HTTP** 内同步完成；超时策略见 §7.4。进程被杀时最多残留临时文件（可忽略或手工清 `KB_DIR` 临时目录），**不会**因半成品行占住同名 UNIQUE。
 
-### 4.2 问答（混合检索 → Rerank → 生成/拒答）
+### 4.2 问答（rag：混合检索 → Rerank → 生成/拒答）
 
 ```
-message + 可选 conversationId（须已登录）
-  → 无 conversationId：INSERT kh_conversation（user_id=当前用户）→ 得到 id
-  → 有 conversationId：校验会话归属，否则 40401
+message + mode + 可选 conversationId（须已登录）
+  → 无 conversationId：INSERT conversation（user_id=当前用户，mode）→ 得到 id
+  → 有 conversationId：校验会话归属与 mode 一致，否则 40401 / 40001
   → 落库 user 消息；title 空则截断首问
-  → 取最近 6 条历史（仅供生成，不进检索）
-  → 向量 + BM25 双路召回 → RRF 融合（RAG_HYBRID_PATH_TOP_K）
+  → 【rag】向量 + BM25 双路召回 → RRF 融合（RAG_HYBRID_PATH_TOP_K）
   → Rerank（送入「标题 | 小节 + 正文」）取 RAG_TOP_K → 精排分数门控（§6.2）
   → 门控后为空 → 拒答话术（rejected=true），不调 LLM
-  → 否则：历史 + 当前问题 + **精排后**片段 → 一次 LLM 生成带 [n] 引用的答案
+  → 否则：当前问题 + **精排后**片段 → 一次 LLM 生成带 [n] 引用的答案（**不带历史**）
   → 落库 assistant（含 citations）→ 返回（含 conversationId，供前端固定后续轮次）
 
 LLM 失败：若本请求已建会话/已落 user，保留之；可写一条失败说明 assistant，或仅返回 50010
 ```
 
-说明：会话由 `/api/chat` 懒建；列表/详情/删除走 `/api/conversations`（仅本人）。
+说明：会话由 `/api/chat` 懒建；列表/详情/删除走 `/api/conversations`（仅本人）。**direct** 路径（无检索、带最近 6 条历史）见 [chat-dual-mode-design.md](./chat-dual-mode-design.md)。
 
 ### 4.3 删除（物理删除）
 
@@ -318,7 +322,7 @@ LLM 失败：若本请求已建会话/已落 user，保留之；可写一条失�
 
 1. 查出该文档 `chroma_id` 列表
 2. `chroma.delete(ids=[...])` — **失败则整单失败**（`50000`），不删库行、不删文件；客户端可重试
-3. 成功后再：`DELETE kh_chunk` → 删 `KB_DIR` 文件 → `DELETE kh_document` → 同步从内存 BM25 移除
+3. 成功后再：`DELETE chunk` → 删 `KB_DIR` 文件 → `DELETE document` → 同步从内存 BM25 移除
 
 完成后同名可再上传。
 
@@ -345,7 +349,7 @@ lifespan：
 
 #### 5.1.1 认证与 RBAC
 
-**`kh_user`** — 用户
+**`sys_user`** — 用户
 
 - `id` BIGINT PK
 - `username` VARCHAR UNIQUE
@@ -353,16 +357,16 @@ lifespan：
 - `status` VARCHAR（`ACTIVE` / `DISABLED`）
 - `created_at`, `updated_at` DATETIME
 
-> 角色走 `kh_user_role`。
+> 角色走 `sys_user_role`。
 
-**`kh_role`** — 角色
+**`sys_role`** — 角色
 
 - `id` BIGINT PK
 - `code` VARCHAR UNIQUE（`admin` / `user`）
 - `name` VARCHAR
 - `created_at`, `updated_at` DATETIME
 
-**`kh_permission`** — 权限
+**`sys_permission`** — 权限
 
 - `id` BIGINT PK
 - `code` VARCHAR UNIQUE（如 `doc:upload`、`chat:ask`）
@@ -370,13 +374,13 @@ lifespan：
 - `type` VARCHAR（本版种子用 `api`）
 - `created_at`, `updated_at` DATETIME
 
-**`kh_user_role`** — 用户–角色
+**`sys_user_role`** — 用户–角色
 
 - `user_id` BIGINT
 - `role_id` BIGINT
 - 联合唯一 `(user_id, role_id)`
 
-**`kh_role_permission`** — 角色–权限
+**`sys_role_permission`** — 角色–权限
 
 - `role_id` BIGINT
 - `permission_id` BIGINT
@@ -399,7 +403,7 @@ lifespan：
 
 #### 5.1.2 知识库与会话
 
-**`kh_document`**（**全员共享库**；**无** `user_id`；**无** `status`）
+**`document`**（**全员共享库**；**无** `user_id`；**无** `status`）
 
 - `id` BIGINT PK
 - `title` VARCHAR
@@ -411,7 +415,7 @@ lifespan：
 
 > 有行即表示入库成功。失败不落库行（或回滚删行）。**会话仅本人，文档全员共享**。
 
-**`kh_chunk`**
+**`chunk`**
 
 - `id` BIGINT PK
 - `document_id` BIGINT
@@ -421,14 +425,15 @@ lifespan：
 - `chroma_id` VARCHAR（格式 **`{document_id}_{chunk_index}`**）
 - `created_at` DATETIME
 
-**`kh_conversation`**
+**`conversation`**
 
 - `id` BIGINT PK
 - `user_id` BIGINT
 - `title` VARCHAR（可空；首条用户消息截断写入，见 §4.2）
+- `mode` VARCHAR（`rag` \| `direct`，NOT NULL，默认 `rag`）
 - `created_at`, `updated_at` DATETIME
 
-**`kh_message`**
+**`message`**
 
 - `id` BIGINT PK
 - `conversation_id` BIGINT
@@ -502,10 +507,11 @@ lifespan：
 - **类型**：仅 `pdf` / `docx` / `md` / `txt`；其它（含 `.doc`）→ `42201`
 - **无有效正文**（空文件、纯图 PDF、损坏等）：入库失败 → `50001`（扩展名合法时不用 `42201`）
 
-### 6.5 多轮
+### 6.5 多轮与双模式
 
-- 检索 / 精排：用**当前用户消息原文**（不改写、不拼历史）
-- 生成：把「当前之前最近 6 条」历史拼进 prompt
+- 检索 / 精排（仅 **rag**）：用**当前用户消息原文**（不改写、不拼历史）
+- **rag 生成**：不带对话历史（仅当前问题 + 检索片段）
+- **direct 生成**：带最近 6 条历史；无检索；见 [chat-dual-mode-design.md](./chat-dual-mode-design.md)
 - 后续可选：多轮按需 query rewrite，改写结果只用于检索
 
 ---
@@ -579,7 +585,7 @@ lifespan：
 | 认证 | `/api/auth` | `POST /register`、`POST /login`、`GET /me`（roles + permissions） |
 | 文档 | `/api/documents` | 上传、列表、详情、**物理删除**（先 Chroma）；共享库：任意已登录用户可操作全库 |
 | 会话 | `/api/conversations` | 列表 / 消息详情 / 删除；仅本人 |
-| 问答 | `/api/chat` | `conversationId` 可选；缺省则懒建会话并返回 id；已有则校验归属；检索范围 = 全库文档 |
+| 问答 | `/api/chat` | `conversationId` / `mode` 可选（缺省 `rag`）；缺省则懒建会话并返回 id；已有则校验归属与 mode；rag 检索范围 = 全库；direct 见 [chat-dual-mode](./chat-dual-mode-design.md) |
 | 健康 | `/api/health` | MySQL + Chroma |
 
 统一响应：`{ "code": 0, "message": "success", "data": {} }`
@@ -625,7 +631,7 @@ lifespan：
 
 - [ ] 入库：先算完再落库；失败回滚；同名 → 40901
 - [ ] 物理删除：先 Chroma（失败整单失败）再库/文件
-- [ ] 问答为「混合检索→Rerank→生成/拒答」；历史可直拼 prompt；检索用当前原文
+- [ ] 问答为「混合检索→Rerank→生成/拒答」；rag 生成不带历史；direct 带最近 6 条（见 [chat-dual-mode](./chat-dual-mode-design.md)）；检索用当前原文
 - [ ] Chroma 最后写；失败简单回滚
 - [ ] 切分按字符；无标题按段落滑窗；仅 pdf/docx/md/txt；无正文 → 50001
 - [ ] JWT + 注册/登录；RBAC 表；lifespan 幂等种子含 `admin`/`123456`；API 只验登录
@@ -648,10 +654,10 @@ lifespan：
 | 入库 | 先解析/Embedding，成功后再写库/落盘；Chroma 最后写；失败回滚；同名→40901；无正文→50001；无 PROCESSING / 无僵尸清理 |
 | 解析/切分 | 字符窗 max≈800 / overlap≈100；有标题用 heading；无标题段落滑窗；仅 pdf/docx/md/txt |
 | 同步超时 | 入库 Axios 600s、问答 120s；前端长等待文案；网关超时对齐 |
-| 文档库 | 全员共享；`kh_document` 无 `user_id`、无 `status`；任意登录用户可列表/删/被检索 |
+| 文档库 | 全员共享；`document` 无 `user_id`、无 `status`；任意登录用户可列表/删/被检索 |
 | 删除 | 先 Chroma（失败整单失败）再 MySQL / 文件 |
 | 问答 | 混合检索 → Rerank 分数门控 → 规则拒答/一次生成；检索全库 |
 | 会话 | chat 懒建；`conversationId` 可选；列表/删仅本人 |
-| 多轮 | 历史拼进生成 prompt；检索/精排用当前原文 |
+| 多轮 | rag 生成不带历史；direct 带最近 6 条（见 [chat-dual-mode](./chat-dual-mode-design.md)）；检索/精排用当前原文 |
 | 检索 | 向量 + BM25 → RRF → BGE Rerank；collection cosine |
 | 拒答 | 融合为空或精排分数门控后为空（软地板 0.05 + 相对 0.5 + Top1 兜底 0.15） |

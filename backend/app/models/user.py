@@ -9,7 +9,7 @@ from app.common.db import Base
 class User(Base):
     """登录用户。"""
 
-    __tablename__ = "kh_user"
+    __tablename__ = "sys_user"
     __table_args__ = {"comment": "用户表"}
 
     id: Mapped[int] = mapped_column(
@@ -28,13 +28,13 @@ class User(Base):
         comment="账号状态：ACTIVE=正常，DISABLED=禁用",
     )
     created_by: Mapped[int | None] = mapped_column(
-        BigInteger, nullable=True, comment="创建人用户ID（kh_user.id；种子可空）"
+        BigInteger, nullable=True, comment="创建人用户ID（sys_user.id；种子可空）"
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, server_default=func.now(), comment="创建时间"
     )
     updated_by: Mapped[int | None] = mapped_column(
-        BigInteger, nullable=True, comment="修改人用户ID（kh_user.id；种子可空）"
+        BigInteger, nullable=True, comment="修改人用户ID（sys_user.id；种子可空）"
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,

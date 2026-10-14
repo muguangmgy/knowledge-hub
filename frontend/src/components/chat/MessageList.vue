@@ -1,8 +1,8 @@
 <template>
   <div class="messages" ref="root">
     <div v-if="!messages.length" class="empty">
-      <div class="empty-title">开始提问</div>
-      <p>答案将附带知识库引用；依据不足时会拒答说明。</p>
+      <div class="empty-title">{{ emptyTitle }}</div>
+      <p>{{ emptyHint }}</p>
     </div>
     <div
       v-for="(m, idx) in messages"
@@ -12,21 +12,27 @@
     >
       <div class="role">{{ m.role === 'user' ? '你' : '助手' }}</div>
       <div class="content">{{ m.content }}</div>
-      <div v-if="m.rejected" class="rejected">已拒答（依据不足）</div>
-      <CitationList v-if="m.role === 'assistant'" :items="m.citations || []" />
+      <slot name="assistant-extra" :message="m" />
     </div>
   </div>
 </template>
 
 <script setup>
-/** 消息列表；助手消息可展示拒答标识与 citations。 */
+/** 通用消息列表（无 store / 无 CitationList）；空态与助手附加区由父级传入。 */
 import { nextTick, ref, watch } from 'vue'
-import CitationList from './CitationList.vue'
 
 const props = defineProps({
   messages: {
     type: Array,
     default: () => [],
+  },
+  emptyTitle: {
+    type: String,
+    default: '开始提问',
+  },
+  emptyHint: {
+    type: String,
+    default: '',
   },
 })
 
@@ -112,17 +118,5 @@ watch(
   white-space: pre-wrap;
   line-height: 1.65;
   font-size: 14px;
-}
-
-.rejected {
-  margin-top: 10px;
-  display: inline-block;
-  padding: 4px 8px;
-  border-radius: var(--radius-sm);
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--warning);
-  background: var(--warning-soft);
-  border: 1px solid #fed7aa;
 }
 </style>

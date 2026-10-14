@@ -33,7 +33,7 @@
 </template>
 
 <script setup>
-/** 登录页；成功后跳转 redirect 或 /chat。 */
+/** 登录页；成功后跳转 redirect 或 /chat/rag。 */
 import { reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
@@ -54,8 +54,8 @@ async function onSubmit() {
   try {
     await userStore.login(form)
     ElMessage.success('登录成功')
-    const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : '/chat'
-    router.replace(redirect || '/chat')
+    const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : '/chat/rag'
+    router.replace(redirect || '/chat/rag')
   } catch (err) {
     ElMessage.error(err?.message || '登录失败')
   } finally {

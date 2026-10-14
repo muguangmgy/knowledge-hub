@@ -6,7 +6,8 @@
         <span class="brand-text">Knowledge Hub</span>
       </div>
       <nav class="nav">
-        <RouterLink to="/chat">对话</RouterLink>
+        <RouterLink to="/chat/rag">知识库问答</RouterLink>
+        <RouterLink to="/chat/direct">自由对话</RouterLink>
         <RouterLink to="/documents">文档</RouterLink>
       </nav>
       <el-dropdown
@@ -133,7 +134,7 @@ watch(() => route.fullPath, ensureProfile)
   background: var(--bg-subtle);
 }
 
-.nav a.router-link-active {
+.nav a.router-link-exact-active {
   color: var(--accent);
   background: var(--accent-soft);
   font-weight: 600;

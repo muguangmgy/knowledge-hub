@@ -55,7 +55,7 @@ backend/app/
 
 ## 3. 产品与数据约定
 
-- **共享库**：`kh_document` 无 `user_id`；任意已登录用户可上传 / 列表 / 详情 / 删除全库
+- **共享库**：`document` 无 `user_id`；任意已登录用户可上传 / 列表 / 详情 / 删除全库
 - **有行即成功**：无 `status` / 无 PROCESSING / 无僵尸清理
 - **类型**：仅 `pdf` / `docx` / `md` / `txt`；其它（含 `.doc`）→ `42201`
 - **大小**：最终以实际读入字节为准；超限 → `41301`
@@ -84,8 +84,8 @@ backend/app/
   → 读入内存或临时文件
   → 解析 → 无有效正文？→ 清临时 → 50001
   → 切分 → Embedding（内存准备 chunks）
-  → INSERT kh_document（IntegrityError → 40901）→ documentId
-  → 写 kh_chunk；落盘 KB_DIR/{document_id}/{filename}
+  → INSERT document（IntegrityError → 40901）→ documentId
+  → 写 chunk；落盘 KB_DIR/{document_id}/{filename}
   → 【最后】写 Chroma → 同步 upsert 内存 BM25
   → 返回 documentId
 
@@ -100,7 +100,7 @@ Embedding 失败可重试 1～2 次，仍失败再回滚 → `50001`（非问答
 
 1. 查出 `chroma_id` 列表  
 2. `chroma.delete` — 失败整单失败 `50000`，不动库与文件  
-3. 成功后：`DELETE kh_chunk` → 删文件 → `DELETE kh_document`  
+3. 成功后：`DELETE chunk` → 删文件 → `DELETE document`  
 
 完成后同名可再上传。
 

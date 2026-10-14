@@ -9,7 +9,7 @@ from app.common.db import Base
 class Chunk(Base):
     """文档切片；chroma_id 关联向量库。"""
 
-    __tablename__ = "kh_chunk"
+    __tablename__ = "chunk"
     __table_args__ = {"comment": "文档切片表"}
 
     id: Mapped[int] = mapped_column(
@@ -19,7 +19,7 @@ class Chunk(Base):
         BigInteger,
         nullable=False,
         index=True,
-        comment="所属文档ID（kh_document.id）",
+        comment="所属文档ID（document.id）",
     )
     chunk_index: Mapped[int] = mapped_column(
         Integer, nullable=False, comment="文档内切片序号（从 0 起）"
@@ -40,13 +40,13 @@ class Chunk(Base):
         comment="Chroma 向量ID，格式 {document_id}_{chunk_index}",
     )
     created_by: Mapped[int | None] = mapped_column(
-        BigInteger, nullable=True, comment="创建人用户ID（kh_user.id）"
+        BigInteger, nullable=True, comment="创建人用户ID（sys_user.id）"
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, server_default=func.now(), comment="创建时间"
     )
     updated_by: Mapped[int | None] = mapped_column(
-        BigInteger, nullable=True, comment="修改人用户ID（kh_user.id）"
+        BigInteger, nullable=True, comment="修改人用户ID（sys_user.id）"
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,

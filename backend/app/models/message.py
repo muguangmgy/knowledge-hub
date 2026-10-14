@@ -10,7 +10,7 @@ from app.common.db import Base
 class Message(Base):
     """会话消息；assistant 可带 citations JSON。"""
 
-    __tablename__ = "kh_message"
+    __tablename__ = "message"
     __table_args__ = {"comment": "会话消息表"}
 
     id: Mapped[int] = mapped_column(
@@ -20,7 +20,7 @@ class Message(Base):
         BigInteger,
         nullable=False,
         index=True,
-        comment="所属会话ID（kh_conversation.id）",
+        comment="所属会话ID（conversation.id）",
     )
     role: Mapped[str] = mapped_column(
         String(32),
@@ -36,13 +36,13 @@ class Message(Base):
         comment="引用片段 JSON（assistant 用；含 doc_id/chunk_id/snippet 等）",
     )
     created_by: Mapped[int | None] = mapped_column(
-        BigInteger, nullable=True, comment="创建人用户ID（kh_user.id）"
+        BigInteger, nullable=True, comment="创建人用户ID（sys_user.id）"
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, server_default=func.now(), comment="创建时间"
     )
     updated_by: Mapped[int | None] = mapped_column(
-        BigInteger, nullable=True, comment="修改人用户ID（kh_user.id）"
+        BigInteger, nullable=True, comment="修改人用户ID（sys_user.id）"
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,

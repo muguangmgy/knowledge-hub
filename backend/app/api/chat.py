@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.auth.deps import get_current_user
@@ -17,23 +17,27 @@ def chat(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """检索后拒答或生成带引用答案。"""
+    """统一问答入口：body.mode 为 rag（知识库）或 direct（自由对话）。"""
     data = chat_service.ask(
         db,
         user,
         message=body.message,
         conversation_id=body.conversationId,
+        mode=body.mode,
     )
     return ok(data)
 
 
 @router.get("/api/conversations")
 def list_conversations(
+    mode: str | None = Query(
+        default=None, description="rag | direct；缺省只返回 rag 会话"
+    ),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """当前用户会话列表。"""
-    return ok(chat_service.list_conversations(db, user))
+    """当前用户会话列表；按 mode 过滤（缺省等价 mode=rag）。"""
+    return ok(chat_service.list_conversations(db, user, mode=mode))
 
 
 @router.get("/api/conversations/{conversation_id}")

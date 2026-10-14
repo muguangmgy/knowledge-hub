@@ -1,15 +1,12 @@
 from __future__ import annotations
 
 import json
-import logging
 import urllib.error
 import urllib.request
 
 from app.common.config import get_settings
 from app.common.errors import AppError, ErrorCode
 from app.rag.retriever import RetrievedChunk
-
-logger = logging.getLogger(__name__)
 
 
 def rerank_chunks(
@@ -68,19 +65,6 @@ def rerank_chunks(
         "return_documents": False,
     }
 
-    logger.info(
-        "[精排·请求] 模型=%s 候选数=%s 截断top_n=%s 软地板=%s "
-        "相对比例=%s Top1兜底地板=%s 问题=%r 候选ids=%s",
-        settings.RERANK_MODEL,
-        len(chunks),
-        n,
-        min_score,
-        relative_ratio,
-        keep_top1_floor,
-        query,
-        [c.chroma_id for c in chunks],
-    )
-
     try:
         body = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(
@@ -109,7 +93,6 @@ def rerank_chunks(
         ) from exc
 
     results = data.get("results") or []
-    # API 一般已按分数降序；再排一次保证 Top1 可靠
     parsed: list[tuple[RetrievedChunk, float]] = []
     for item in results:
         idx = int(item.get("index", -1))
@@ -119,24 +102,11 @@ def rerank_chunks(
         parsed.append((chunks[idx], score))
     parsed.sort(key=lambda x: x[1], reverse=True)
 
-    ranked, scores, dropped = _apply_score_gate(
+    ranked, _scores = _apply_score_gate(
         parsed,
         min_score=min_score,
         relative_ratio=relative_ratio,
         keep_top1_floor=keep_top1_floor,
-    )
-
-    logger.info(
-        "[精排·结果] 输出条数=%s 软地板=%s 相对比例=%s Top1兜底地板=%s "
-        "丢弃=%s ids=%s 相关性分数=%s 距离=%s",
-        len(ranked),
-        min_score,
-        relative_ratio,
-        keep_top1_floor,
-        [(cid, round(s, 4), reason) for cid, s, reason in dropped],
-        [c.chroma_id for c in ranked],
-        [round(s, 4) for s in scores],
-        [round(c.distance, 4) for c in ranked],
     )
     return ranked
 
@@ -147,46 +117,30 @@ def _apply_score_gate(
     min_score: float,
     relative_ratio: float,
     keep_top1_floor: float,
-) -> tuple[list[RetrievedChunk], list[float], list[tuple[str, float, str]]]:
+) -> tuple[list[RetrievedChunk], list[float]]:
     """精排分数门控：绝对软地板 + 相对落差；空则按地板兜底 Top1。"""
     if not parsed:
-        return [], [], []
+        return [], []
 
     top1_score = parsed[0][1]
     relative_cut = top1_score * relative_ratio
     ranked: list[RetrievedChunk] = []
     scores: list[float] = []
-    dropped: list[tuple[str, float, str]] = []
 
     for chunk, score in parsed:
-        cid = chunk.chroma_id
         if score < min_score:
-            dropped.append((cid, score, "abs"))
             continue
         if score < relative_cut:
-            dropped.append((cid, score, "rel"))
             continue
         ranked.append(chunk)
         scores.append(score)
 
-    # 滤完为空：Top1 尚可接受则至少保留，避免短问误拒答
     if not ranked and parsed[0][1] >= keep_top1_floor:
         top_chunk, top_score = parsed[0]
         ranked = [top_chunk]
         scores = [top_score]
-        dropped = [
-            (cid, s, reason)
-            for cid, s, reason in dropped
-            if cid != top_chunk.chroma_id
-        ]
-        logger.info(
-            "[精排·Top1兜底] 保留 id=%s score=%s floor=%s",
-            top_chunk.chroma_id,
-            round(top_score, 4),
-            keep_top1_floor,
-        )
 
-    return ranked, scores, dropped
+    return ranked, scores
 
 
 def _doc_text(title: str, heading_path: str, content: str) -> str:

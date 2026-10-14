@@ -9,7 +9,7 @@ from app.common.db import Base
 class Role(Base):
     """角色（如 admin / user）。"""
 
-    __tablename__ = "kh_role"
+    __tablename__ = "sys_role"
     __table_args__ = {"comment": "角色表"}
 
     id: Mapped[int] = mapped_column(
@@ -22,13 +22,13 @@ class Role(Base):
         String(128), nullable=False, comment="角色显示名称"
     )
     created_by: Mapped[int | None] = mapped_column(
-        BigInteger, nullable=True, comment="创建人用户ID（kh_user.id；种子可空）"
+        BigInteger, nullable=True, comment="创建人用户ID（sys_user.id；种子可空）"
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, server_default=func.now(), comment="创建时间"
     )
     updated_by: Mapped[int | None] = mapped_column(
-        BigInteger, nullable=True, comment="修改人用户ID（kh_user.id；种子可空）"
+        BigInteger, nullable=True, comment="修改人用户ID（sys_user.id；种子可空）"
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,
@@ -42,7 +42,7 @@ class Role(Base):
 class Permission(Base):
     """权限码（本版仅供 /me 展示）。"""
 
-    __tablename__ = "kh_permission"
+    __tablename__ = "sys_permission"
     __table_args__ = {"comment": "权限表"}
 
     id: Mapped[int] = mapped_column(
@@ -64,13 +64,13 @@ class Permission(Base):
         comment="权限类型（本版种子均为 api）",
     )
     created_by: Mapped[int | None] = mapped_column(
-        BigInteger, nullable=True, comment="创建人用户ID（kh_user.id；种子可空）"
+        BigInteger, nullable=True, comment="创建人用户ID（sys_user.id；种子可空）"
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, server_default=func.now(), comment="创建时间"
     )
     updated_by: Mapped[int | None] = mapped_column(
-        BigInteger, nullable=True, comment="修改人用户ID（kh_user.id；种子可空）"
+        BigInteger, nullable=True, comment="修改人用户ID（sys_user.id；种子可空）"
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,
@@ -84,7 +84,7 @@ class Permission(Base):
 class UserRole(Base):
     """用户-角色关联。"""
 
-    __tablename__ = "kh_user_role"
+    __tablename__ = "sys_user_role"
     __table_args__ = (
         UniqueConstraint("user_id", "role_id", name="uq_user_role"),
         {"comment": "用户-角色关联表"},
@@ -94,19 +94,19 @@ class UserRole(Base):
         BigInteger, primary_key=True, autoincrement=True, comment="关联ID"
     )
     user_id: Mapped[int] = mapped_column(
-        BigInteger, nullable=False, comment="用户ID（kh_user.id）"
+        BigInteger, nullable=False, comment="用户ID（sys_user.id）"
     )
     role_id: Mapped[int] = mapped_column(
-        BigInteger, nullable=False, comment="角色ID（kh_role.id）"
+        BigInteger, nullable=False, comment="角色ID（sys_role.id）"
     )
     created_by: Mapped[int | None] = mapped_column(
-        BigInteger, nullable=True, comment="创建人用户ID（kh_user.id；种子可空）"
+        BigInteger, nullable=True, comment="创建人用户ID（sys_user.id；种子可空）"
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, server_default=func.now(), comment="创建时间"
     )
     updated_by: Mapped[int | None] = mapped_column(
-        BigInteger, nullable=True, comment="修改人用户ID（kh_user.id；种子可空）"
+        BigInteger, nullable=True, comment="修改人用户ID（sys_user.id；种子可空）"
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,
@@ -120,7 +120,7 @@ class UserRole(Base):
 class RolePermission(Base):
     """角色-权限关联。"""
 
-    __tablename__ = "kh_role_permission"
+    __tablename__ = "sys_role_permission"
     __table_args__ = (
         UniqueConstraint("role_id", "permission_id", name="uq_role_permission"),
         {"comment": "角色-权限关联表"},
@@ -130,19 +130,19 @@ class RolePermission(Base):
         BigInteger, primary_key=True, autoincrement=True, comment="关联ID"
     )
     role_id: Mapped[int] = mapped_column(
-        BigInteger, nullable=False, comment="角色ID（kh_role.id）"
+        BigInteger, nullable=False, comment="角色ID（sys_role.id）"
     )
     permission_id: Mapped[int] = mapped_column(
-        BigInteger, nullable=False, comment="权限ID（kh_permission.id）"
+        BigInteger, nullable=False, comment="权限ID（sys_permission.id）"
     )
     created_by: Mapped[int | None] = mapped_column(
-        BigInteger, nullable=True, comment="创建人用户ID（kh_user.id；种子可空）"
+        BigInteger, nullable=True, comment="创建人用户ID（sys_user.id；种子可空）"
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, server_default=func.now(), comment="创建时间"
     )
     updated_by: Mapped[int | None] = mapped_column(
-        BigInteger, nullable=True, comment="修改人用户ID（kh_user.id；种子可空）"
+        BigInteger, nullable=True, comment="修改人用户ID（sys_user.id；种子可空）"
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,

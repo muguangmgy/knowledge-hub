@@ -17,7 +17,7 @@ const routes = [
   },
   {
     path: '/',
-    redirect: '/chat',
+    redirect: '/chat/rag',
   },
   {
     path: '/documents',
@@ -26,8 +26,17 @@ const routes = [
   },
   {
     path: '/chat',
-    name: 'chat',
+    redirect: '/chat/rag',
+  },
+  {
+    path: '/chat/rag',
+    name: 'chat-rag',
     component: () => import('../views/chat/ChatView.vue'),
+  },
+  {
+    path: '/chat/direct',
+    name: 'chat-direct',
+    component: () => import('../views/chat/DirectChatView.vue'),
   },
 ]
 

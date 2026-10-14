@@ -6,6 +6,11 @@ from app.rag.retriever import RetrievedChunk
 # 规则拒答固定话术（rejected=true，业务仍 code=0）
 REJECT_REPLY = "依据不足，无法基于知识库回答该问题。"
 
+# direct 模式占位 system prompt（不依赖知识库）
+DIRECT_SYSTEM = (
+    "你是通用对话助手，可进行多轮闲聊与常识问答，不依赖企业知识库。"
+)
+
 
 def build_citations(chunks: list[RetrievedChunk], *, titles: dict[int, str]) -> list[dict]:
     """按检索顺序生成短摘录引用列表，index 从 1 起。"""
@@ -31,10 +36,9 @@ def generate_answer(
     *,
     question: str,
     chunks: list[RetrievedChunk],
-    history: list[dict[str, str]],
     titles: dict[int, str],
 ) -> str:
-    """拼 system + 可选最近历史 + 当前问题与片段；要求答案用 [n] 标注。"""
+    """拼 system + 当前问题与片段（无对话历史）；要求答案用 [n] 标注。"""
     context_parts: list[str] = []
     for i, c in enumerate(chunks, start=1):
         title = titles.get(c.document_id) or c.filename
@@ -49,13 +53,27 @@ def generate_answer(
         "也不要输出「原文未完整」「内容缺失」「依据不足」等元说明"
         "（整题确实无法回答时除外，此时直接说无法基于知识库回答）。"
     )
-    messages: list[dict[str, str]] = [{"role": "system", "content": system}]
-    for h in history:
-        messages.append({"role": h["role"], "content": h["content"]})
-    messages.append(
+    messages: list[dict[str, str]] = [
+        {"role": "system", "content": system},
         {
             "role": "user",
             "content": f"检索片段：\n{context}\n\n用户问题：{question}",
-        }
-    )
+        },
+    ]
+    return chat_completion(messages)
+
+
+def generate_direct_answer(
+    *,
+    question: str,
+    history: list[dict[str, str]],
+) -> str:
+    """自由对话补全：DIRECT_SYSTEM + history（role/content）+ 当前 question。
+
+    不拼检索片段；history 由 chat._ask_direct 截取（通常最多 6 条）。
+    """
+    messages: list[dict[str, str]] = [{"role": "system", "content": DIRECT_SYSTEM}]
+    for h in history:
+        messages.append({"role": h["role"], "content": h["content"]})
+    messages.append({"role": "user", "content": question})
     return chat_completion(messages)

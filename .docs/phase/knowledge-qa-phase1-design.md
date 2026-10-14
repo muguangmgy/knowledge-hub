@@ -88,9 +88,9 @@ backend/
 
 **知识库 / 会话**（建表即可，本阶段无业务写入）：
 
-- `kh_document`：无 `user_id`、无 `status`；`filename` UNIQUE
-- `kh_chunk`：`chroma_id` = `{document_id}_{chunk_index}`
-- `kh_conversation`、`kh_message`
+- `document`：无 `user_id`、无 `status`；`filename` UNIQUE
+- `chunk`：`chroma_id` = `{document_id}_{chunk_index}`
+- `conversation`、`message`
 
 建表方式：`create_all`。
 

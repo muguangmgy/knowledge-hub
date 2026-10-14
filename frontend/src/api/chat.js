@@ -1,14 +1,20 @@
 /** 问答与会话 API；问答 timeout 120s。 */
 import http from './http'
 
-/** POST /api/chat */
+/**
+ * POST /api/chat
+ * @param {{ message: string, conversationId?: number|null, mode?: 'rag'|'direct'|null }} payload
+ */
 export function askChat(payload) {
   return http.post('/api/chat', payload, { timeout: 120000 })
 }
 
-/** GET /api/conversations */
-export function listConversations() {
-  return http.get('/api/conversations')
+/**
+ * GET /api/conversations；显式传 mode（rag|direct），与后端列表过滤对齐
+ * @param {'rag'|'direct'} mode
+ */
+export function listConversations(mode) {
+  return http.get('/api/conversations', { params: { mode } })
 }
 
 /** GET /api/conversations/:id */

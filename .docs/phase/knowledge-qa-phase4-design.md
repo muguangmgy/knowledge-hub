@@ -89,12 +89,13 @@ frontend/
 - 分数门控：软地板 `RAG_RERANK_MIN_SCORE` + 相对落差 `RAG_RERANK_RELATIVE_RATIO` + Top1 兜底 `RAG_RERANK_KEEP_TOP1_FLOOR`
 - 融合为空或门控后为空 → 固定话术，`rejected=true`，不调 LLM
 - 否则**仅**带精排后片段生成；答案用 `[n]`；`citations` 含 doc_id / chunk_id / title / heading_path / snippet
-- 检索/精排：当前用户消息**原文**；生成：拼「当前之前最近 6 条」历史
+- 检索/精排：当前用户消息**原文**
+- ~~生成：拼「当前之前最近 6 条」历史~~ → **已由 [chat-dual-mode](../chat-dual-mode-design.md) 取代**：`rag` 生成不带历史；仅 `direct` 带最近 6 条历史
 - 检索范围 = **全库**文档
 
 ### 3.1 会话（chat 懒建）
 
-- `POST /api/chat`：`conversationId` 可选；缺省则 `INSERT kh_conversation`（归属当前用户）并返回 id
+- `POST /api/chat`：`conversationId` 可选；缺省则 `INSERT conversation`（归属当前用户）并返回 id
 - 已传 id：校验 `conversation.user_id == current_user.id`，否则 `40401`
 - 前端「新对话」只清本地状态
 - `GET/DELETE /api/conversations`：列表 / 消息详情 / 删除；**仅本人**
@@ -126,7 +127,7 @@ LLM 失败：保留已落 user 消息；`50010` 或写失败说明 assistant。
 | Token | localStorage + Bearer；401 清 Token 跳登录 |
 | 登出 | 前端删 Token（无后端 logout） |
 | 入库 UI | loading + 禁用重复提交；提示勿刷新；超时勿假装成功 |
-| 页面 | 登录、注册、文档管理（含上传）、对话（消息 + 引用列表） |
+| 页面 | 登录、注册、文档管理（含上传）；知识库问答 `/chat/rag`（消息 + 引用）、自由对话 `/chat/direct`（见 [chat-dual-mode](../chat-dual-mode-design.md)） |
 
 ---
 
