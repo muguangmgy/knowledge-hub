@@ -11,20 +11,22 @@ alwaysApply: false
 ## 结构
 
 - `api/*`：纯 HTTP；`stores/*`：状态编排；`views` 薄；复用进 `components/`
-- 页面：`views/auth`（登录/注册）、`documents`、`chat`
+- 页面：`views/auth`（登录/注册）、`documents`、`chat`（`ChatView` rag / `DirectChatView` 投研）
+- 全局样式：仅 `assets/css/global.css`（`main.js` 引入；**不要**再建 `styles/`）
+- 助手 Markdown：`utils/markdown.js`（DOMPurify）；投研报告表格走安全 HTML
 - Token：`localStorage` 键 `kh_token`；经 `api/http.js` 读写
 
 ## 路由
 
 - 公开页：`/login`、`/register`（`meta.public`）
-- 需登录：`/chat`、`/documents`；无 Token → `/login?redirect=...`
-- 默认 `/` → `/chat`
+- 需登录：`/chat/rag`（知识库问答）、`/chat/direct`（投研助手）、`/documents`；无 Token → `/login?redirect=...`
+- 默认 `/`、`/chat` → `/chat/rag`；两套会话 store 按 `mode` 隔离，禁止混聊
 
 ## HTTP
 
 - 一律走 `api/http.js`（Bearer、`code !== 0` 拒绝、401/`40101` 清 Token 跳登录）
 - 字段 **camelCase**（`accessToken`、`conversationId`）
-- 超时：入库 `600000`；问答 `120000`；勿假装超时成功
+- 超时：入库 `600000`；问答 / 投研 `120000`（后端图超时约 90s）；勿假装超时成功
 
 ```js
 // ❌ BAD：页面裸 axios

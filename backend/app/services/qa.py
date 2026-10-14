@@ -6,12 +6,6 @@ from app.rag.retriever import RetrievedChunk
 # 规则拒答固定话术（rejected=true，业务仍 code=0）
 REJECT_REPLY = "依据不足，无法基于知识库回答该问题。"
 
-# direct 模式占位 system prompt（不依赖知识库）
-DIRECT_SYSTEM = (
-    "你是通用对话助手，可进行多轮闲聊与常识问答，不依赖企业知识库。"
-)
-
-
 def build_citations(chunks: list[RetrievedChunk], *, titles: dict[int, str]) -> list[dict]:
     """按检索顺序生成短摘录引用列表，index 从 1 起。"""
     citations: list[dict] = []
@@ -60,20 +54,4 @@ def generate_answer(
             "content": f"检索片段：\n{context}\n\n用户问题：{question}",
         },
     ]
-    return chat_completion(messages)
-
-
-def generate_direct_answer(
-    *,
-    question: str,
-    history: list[dict[str, str]],
-) -> str:
-    """自由对话补全：DIRECT_SYSTEM + history（role/content）+ 当前 question。
-
-    不拼检索片段；history 由 chat._ask_direct 截取（通常最多 6 条）。
-    """
-    messages: list[dict[str, str]] = [{"role": "system", "content": DIRECT_SYSTEM}]
-    for h in history:
-        messages.append({"role": h["role"], "content": h["content"]})
-    messages.append({"role": "user", "content": question})
     return chat_completion(messages)

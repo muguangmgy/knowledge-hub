@@ -13,14 +13,17 @@ _actor_id: ContextVar[int | None] = ContextVar("audit_actor_id", default=None)
 
 
 def get_actor_id() -> int | None:
+    """读取当前请求绑定的操作人 user_id。"""
     return _actor_id.get()
 
 
 def set_actor_id(user_id: int | None) -> None:
+    """绑定当前操作人（如鉴权通过后）。"""
     _actor_id.set(user_id)
 
 
 def clear_actor_id() -> None:
+    """清除当前操作人 ContextVar。"""
     _actor_id.set(None)
 
 
@@ -44,6 +47,7 @@ def touch(obj) -> None:
 
 
 def _has_col(obj, name: str) -> bool:
+    """判断 ORM 对象是否映射了指定列。"""
     mapper = getattr(type(obj), "__mapper__", None)
     if mapper is None:
         return False
@@ -51,6 +55,7 @@ def _has_col(obj, name: str) -> bool:
 
 
 def _apply_insert(obj, actor: int) -> None:
+    """插入时补 created_by / updated_by（仅空值）。"""
     if _has_col(obj, "created_by") and getattr(obj, "created_by", None) is None:
         obj.created_by = actor
     if _has_col(obj, "updated_by") and getattr(obj, "updated_by", None) is None:
@@ -58,11 +63,13 @@ def _apply_insert(obj, actor: int) -> None:
 
 
 def _apply_update(obj, actor: int) -> None:
+    """更新时推进 updated_by。"""
     if _has_col(obj, "updated_by"):
         obj.updated_by = actor
 
 
 def _before_flush(session: Session, _flush_context, _instances) -> None:
+    """Session before_flush：按当前 actor 补审计字段。"""
     actor = get_actor_id()
     if actor is None:
         return

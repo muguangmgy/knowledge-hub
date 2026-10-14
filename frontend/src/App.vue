@@ -7,7 +7,7 @@
       </div>
       <nav class="nav">
         <RouterLink to="/chat/rag">知识库问答</RouterLink>
-        <RouterLink to="/chat/direct">自由对话</RouterLink>
+        <RouterLink to="/chat/direct">投研助手</RouterLink>
         <RouterLink to="/documents">文档</RouterLink>
       </nav>
       <el-dropdown

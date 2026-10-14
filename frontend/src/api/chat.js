@@ -1,4 +1,7 @@
-/** 问答与会话 API；问答 timeout 120s。 */
+/**
+ * 问答与会话 API。
+ * askChat 单独 120s：投研 Multi-Agent（拉数 + Writer LLM + 可选发信）常超过默认 30s。
+ */
 import http from './http'
 
 /**

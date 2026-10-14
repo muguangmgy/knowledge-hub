@@ -59,7 +59,11 @@
           <slot name="assistant-extra" v-bind="slotProps" />
         </template>
       </MessageList>
-      <ChatInput :disabled="store.asking" @send="onSend" />
+      <ChatInput
+        :disabled="store.asking"
+        :placeholder="inputPlaceholder"
+        @send="onSend"
+      />
     </section>
   </div>
 </template>
@@ -76,6 +80,10 @@ const props = defineProps({
   store: { type: Object, required: true },
   emptyTitle: { type: String, default: '开始提问' },
   emptyHint: { type: String, default: '' },
+  inputPlaceholder: {
+    type: String,
+    default: '输入问题，Enter 发送，Shift+Enter 换行',
+  },
 })
 
 const openMenuId = ref(null)

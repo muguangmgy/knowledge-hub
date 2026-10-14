@@ -5,42 +5,50 @@ alwaysApply: true
 
 # 项目介绍
 
-**Knowledge Hub**（knowledge-qa）：企业文档入库后的可问答知识库。
+**Knowledge Hub**（knowledge-qa）：企业文档入库后的可问答知识库，并含股票投研助手。
 
-主链路：上传（pdf/docx/md/txt）→ 解析切分 → Embedding → Chroma + BM25 → 向量/BM25 双路 RRF → BGE Rerank 分数门控 → 依据不足拒答，否则一次 LLM 带引用生成。
+主链路（RAG）：上传（pdf/docx/md/txt）→ 解析切分 → Embedding → Chroma + BM25 → 向量/BM25 双路 RRF → BGE Rerank 分数门控 → 依据不足拒答，否则一次 LLM 带引用生成。
+
+投研（`mode=direct`）：`POST /api/chat` → LangGraph 固定拓扑（Coordinator → 并行 quote/market/news → Writer → Mailer）；腾讯行情/资讯 + 新浪代码表；可选 SMTP 发 PDF。不改动 RAG。
 
 | 层 | 栈 |
 |----|-----|
 | 前端 | Vue 3 + Vite + Pinia + Element Plus + Axios（`:5173`） |
 | 后端 | FastAPI + SQLAlchemy + MySQL（`:8000`） |
 | 向量 / 模型 | Chroma（本地）+ 内存 BM25 + SiliconFlow（Embedding / Rerank / Chat） |
+| 投研 | LangGraph + requests（腾讯/新浪）+ 可选 Redis + SMTP |
 
-规格与阶段文档在 `.docs/`；行为回归脚本在 `scripts/`。
+规格与阶段文档在 `.docs/`（含双模式、投研 Multi-Agent）；行为回归脚本在仓库根 `scripts/`（另有部分在 `backend/scripts/`）。
 
 # 目录结构
 
 ```
 knowledge-hub/
-├── .docs/                    # 设计总览 + phase1–4
-├── scripts/                  # verify_phase*.py 回归
+├── .docs/                    # 设计总览 + phase1–4 + 双模式 / 投研
+├── .cursor/rules/            # Cursor 约定
+├── scripts/                  # 迁移 + verify_*.py（仓库根）
 ├── backend/
 │   ├── .env / requirements.txt / .venv
+│   ├── scripts/              # 部分 phase 回归
 │   ├── data/kb/ · data/chroma/
 │   └── app/
 │       ├── main.py           # 入口、lifespan、CORS、挂路由
 │       ├── api/              # HTTP 路由（auth / documents / chat）
 │       ├── services/         # 业务（auth / ingest / chat / qa）
-│       ├── common/           # config、db、errors、response、chroma
+│       ├── agent/            # 投研：graph.py · state · agents/ · tools/
+│       ├── common/           # config、db、errors、response、chroma、redis、logging
 │       ├── models/ · schemas/
 │       ├── auth/             # deps、security、seed
 │       ├── ingest/           # parser、chunker
 │       ├── rag/              # embedding、chroma_store、bm25_store、retriever、rerank
 │       └── llm/              # 对话补全客户端
 └── frontend/src/
-    ├── main.js · App.vue · assets/css/
-    ├── api/ · stores/ · router/
-    ├── views/                # auth、documents、chat
+    ├── main.js · App.vue
+    ├── assets/css/global.css # 全局样式唯一入口
+    ├── api/ · stores/ · router/ · utils/
+    ├── views/                # auth、documents、chat（rag / direct）
     └── components/           # ingest、chat
 ```
 
-改代码时落到对应模块；新能力优先扩展现有包，勿平行另起一套目录。
+改代码时落到对应模块；新能力优先扩展现有包，勿平行另起一套目录。  
+`mode=direct` 换芯见 `app/agent/`（拓扑在 `agent/graph.py`，**不要**再建顶层 `app/graph/`）；外壳仍走 `/api/chat`。

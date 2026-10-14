@@ -1,28 +1,31 @@
 # Knowledge Hub — 双模式对话技术方案设计文档
 
 - **日期**：2026-10-14
-- **状态**：已实现（待验收）
+- **状态**：已实现（外壳仍有效；`direct` 内核已由投研取代）
 - **作者**：项目组
 - **功能短名**：`chat-dual-mode`
 - **对应主文档**：[knowledge-qa-design.md](./knowledge-qa-design.md)
-- **说明**：在现有「知识库问答（RAG）」之外，增加独立的「自由对话（纯 LLM）」入口；用户显式选择模式；同一会话一种模式，不允许混聊。
+- **后续规格**：[stock-research-agent-design.md](./stock-research-agent-design.md)（`mode=direct` 现网实现）
+- **说明**：在「知识库问答（RAG）」之外增加第二条会话入口；用户显式选择模式；同一会话一种模式，不允许混聊。
+
+> **现网对齐（2026-10-14）**：本文定义的 **会话 `mode`、API、双路由、禁止混聊** 仍有效。原「`direct` = 纯 LLM 闲聊 + 最近 6 条历史」已被 [stock-research-agent-design.md](./stock-research-agent-design.md) **整段替换**：顶栏文案为「投研助手」，`_ask_direct` → LangGraph Multi-Agent，**不带闲聊历史**。下文留作双模式外壳与迁移依据；`direct` 内核以投研文档为准。
 
 ---
 
 ## 1. 定位与目标
 
-Knowledge Hub 当前对话入口固定走混合检索 → Rerank → 拒答 / 带引用生成。本功能在**不改动 RAG 检索链路本体**的前提下，增加第二条路径：完全跳过检索，直接调用 LLM。
+Knowledge Hub 当前对话入口固定走混合检索 → Rerank → 拒答 / 带引用生成。本功能在**不改动 RAG 检索链路本体**的前提下，增加第二条路径：跳过检索（原规划为直调 LLM；现网为投研图）。
 
-**目标能力**：
+**目标能力**（外壳；仍有效）：
 
-- 用户在顶栏常驻切换「知识库问答 | 自由对话」
+- 用户在顶栏常驻切换「知识库问答 | 投研助手」
 - 同接口 `POST /api/chat` 通过 `mode` 区分行为：`rag` / `direct`
 - 会话级绑定模式：懒建时写入 `mode`，续聊必须一致
 - 会话列表按 `mode` 过滤，两套前端入口各自只展示本模式历史
 - `rag`：检索链路不变；**生成不再携带对话历史**（仅当前问题 + 检索片段）
-- `direct`：不碰检索；**携带最近 6 条多轮历史**；无引用、不拒答
+- `direct`：不碰检索；无引用、不拒答（内核见投研文档）
 
-**交付目标**：本地可演示两种模式；样式与现有对话页一致；`rag` 仍可引用/拒答，`direct` 可多轮闲聊。
+**交付目标**：本地可演示两种模式；样式与现有对话页一致；`rag` 仍可引用/拒答；`direct` 现网为投研报告链路。
 
 ---
 
@@ -34,7 +37,7 @@ Knowledge Hub 当前对话入口固定走混合检索 → Rerank → 拒答 / �
 |----|------|
 | 数据 | 系统相关表前缀改为 `sys_`（业务表去掉 kh_ 前缀）；`conversation` 增加 `mode` |
 | API | `ChatRequest.mode`；列表 `?mode=`；会话响应带 `mode`；混聊校验 |
-| 后端 | 系统表 ORM/`__tablename__`/注释同步为 `sys_*`；`ask` 按 mode 分支；`rag` 去掉生成历史；`direct` 直调 LLM |
+| 后端 | 系统表 ORM/`__tablename__`/注释同步为 `sys_*`；`ask` 按 mode 分支；`rag` 去掉生成历史；`direct` 原为直调 LLM（现网见投研文档） |
 | 前端 | 顶栏双入口；路由 `/chat/rag` 与 `/chat/direct`；两套 View/Store |
 
 ### 2.2 非目标（本规格不做）
@@ -44,7 +47,7 @@ Knowledge Hub 当前对话入口固定走混合检索 → Rerank → 拒答 / �
 - 私有文档库 / 按文档 ACL 检索
 - `direct` 独立模型、独立 temperature 配置（共用现有 `LLM_*`）
 - 同一会话内切换模式或混用历史
-- **`rag` 多轮指代理解（有意变更现网行为）**：知识库问答定位为「每轮独立、只答当前问题」——生成侧**不**把此前问答拼进 prompt。指代续问（如先问「年假怎么申请」再问「需要审批吗」）依赖检索命中当前问句本身；需要多轮上下文时使用 **`direct`**。理由：缩小 rag 幻觉面、避免历史与检索片段争抢上下文；多轮闲聊能力由 `direct` 承担。详见 §6.3、验收 A3。
+- **`rag` 多轮指代理解（有意变更现网行为）**：知识库问答定位为「每轮独立、只答当前问题」——生成侧**不**把此前问答拼进 prompt。指代续问依赖检索命中当前问句本身，或把指代写进当前问句。理由：缩小 rag 幻觉面。原规划中「多轮闲聊由 `direct` 承担」已废止；`direct` 现为投研，亦**不**带闲聊历史。详见 §6.3、验收 A3。
 
 ---
 
@@ -60,19 +63,18 @@ flowchart TD
   retrieve --> rerank[rerank 分数门控]
   rerank -->|空| reject[拒答 rejected true]
   rerank -->|有片段| genRag["生成: system + 当前问 + 片段 无历史"]
-  branch -->|direct| loadHist[取最近 6 条历史]
-  loadHist --> genDirect["生成: system_direct + history + 当前问"]
+  branch -->|direct| askDirect["投研图 run_research_graph（见 stock-research）"]
   reject --> saveAsst[落库 assistant]
   genRag --> saveAsst
-  genDirect --> saveAsst
+  askDirect --> saveAsst
   saveAsst --> resp[返回 answer citations rejected]
 ```
 
 **要点**：
 
 - 检索**始终只用当前用户消息原文**，不拼历史。
-- `rag` 生成侧**有意不带历史**（相对现网行为变更，见 §2.2）；`direct` 生成侧带最近 6 条。
-- `direct` **不调用** `retrieve` / `rerank` / Embedding。
+- `rag` 生成侧**有意不带历史**（见 §2.2）。
+- `direct` **不调用** `retrieve` / `rerank` / Embedding；现网为 Multi-Agent（原「6 条历史闲聊」已废止）。
 
 ---
 
@@ -164,7 +166,7 @@ flowchart TD
 |------|-----|--------|
 | `conversationId` | 有 | 有 |
 | `messageId` | 有 | 有 |
-| `answer` | 生成或拒答文案 | LLM 回复 |
+| `answer` | 生成或拒答文案 | 投研 `report_md`（现网） |
 | `rejected` | 依据不足时 `true` | 恒为 `false` |
 | `citations` | 有则非空数组 | 恒为 `[]` |
 
@@ -209,7 +211,8 @@ flowchart TD
 | [`backend/app/schemas/chat.py`](../backend/app/schemas/chat.py) | `ChatRequest.mode`；可选 Literal / 校验 |
 | [`backend/app/api/chat.py`](../backend/app/api/chat.py) | 传入 `mode`；列表接收 `mode` Query |
 | [`backend/app/services/chat.py`](../backend/app/services/chat.py) | 懒建写 mode；续聊校验；`list_conversations` 过滤；`ask` 分支 |
-| [`backend/app/services/qa.py`](../backend/app/services/qa.py) | `rag`：生成接口不接收 / 不拼接 history；新增 `generate_direct_answer`（占位 system + history + 当前问） |
+| [`backend/app/services/qa.py`](../backend/app/services/qa.py) | `rag`：生成不拼接 history；原 `generate_direct_answer` 已由投研图取代（见 stock-research） |
+| [`backend/app/agent/`](../backend/app/agent/) | `mode=direct` 现网实现：LangGraph 固定拓扑 |
 | [`backend/app/common/errors.py`](../backend/app/common/errors.py) | `BAD_REQUEST = 40001` |
 | DB | 系统表 → `sys_*`；业务表去 `kh_`；`conversation` 表末尾加 `mode`（§4.0 / §4.1） |
 
@@ -219,20 +222,20 @@ flowchart TD
 2. 懒建 / 加载会话并校验 mode
 3. 落库 user 消息
 4. **`mode == "rag"`**  
-   - **不查询**对话历史（禁止「先取再丢弃」）；从现网公共「取最近 6 条」步骤中拆出，仅 `direct` 走查询  
-   - `retrieve` → `rerank_chunks` → 空则拒答，否则 `generate_answer`（无 history 参数或内部不拼历史）  
-5. **`mode == "direct"`**  
-   - 取当前消息之前最近 **6** 条，时间正序（与现网一致：`Message.id < 当前 user 消息 id`，避免把本轮 user 再拼进 history）  
-   - `generate_direct_answer(history, question)`  
-   - 响应 `rejected=false`，`citations=[]`  
+   - **不查询**对话历史（禁止「先取再丢弃」）  
+   - `retrieve` → `rerank_chunks` → 空则拒答，否则 `generate_answer`（无 history）  
+5. **`mode == "direct"`**（现网）  
+   - **不**取闲聊历史  
+   - `_ask_direct` → `run_research_graph`（见投研文档）  
+   - 响应 `rejected=false`，`citations=[]`；`answer` = `report_md`  
 6. 落库 assistant 并返回
 
 ### 6.2 Prompt
 
-| 模式 | System |
+| 模式 | System / 内核 |
 |------|--------|
 | rag | 保持现有企业知识库助手 + 引用规范（[`qa.py`](../backend/app/services/qa.py)） |
-| direct | 占位即可，例如：「你是通用对话助手，可进行多轮闲聊与常识问答，不依赖企业知识库。」 |
+| direct | 投研 Writer/Coordinator 使用现有 `LLM_*`；见投研文档（原闲聊 system 已废止） |
 
 本阶段不强制独立配置键；后续若需再拆 `LLM_TEMPERATURE` 等。
 
@@ -241,9 +244,9 @@ flowchart TD
 | 模式 | 检索是否用历史 | 生成是否用历史 |
 |------|----------------|----------------|
 | rag | 否 | **否**（有意变更现网：去掉最近 6 条；见 §2.2） |
-| direct | 不检索 | **是**（最近 6 条） |
+| direct | 不检索 | **否**（现网：每轮独立投研任务；原「最近 6 条闲聊」已废止） |
 
-产品含义：`rag` 会话仍可在 UI 展示多轮消息气泡，但每一轮生成**彼此独立**；指代续问请用 `direct`，或把指代写进当前问句再走 `rag`。
+产品含义：`rag` / `direct` 会话均可在 UI 展示多轮消息气泡，但每一轮生成**彼此独立**；指代须写进当前问句。
 
 ---
 
@@ -253,12 +256,12 @@ flowchart TD
 
 | 项 | 约定 |
 |----|------|
-| 顶栏 | [`App.vue`](../frontend/src/App.vue)：常驻「知识库问答」「自由对话」（可保留「文档」）；去掉或替换原单一「对话」链 |
-| 路由 | `/chat/rag` → rag 页；`/chat/direct` → direct 页；`/chat` 重定向到 `/chat/rag`；默认登录落地 `/chat/rag` |
+| 顶栏 | [`App.vue`](../frontend/src/App.vue)：常驻「知识库问答」「投研助手」（可保留「文档」） |
+| 路由 | `/chat/rag` → rag 页；`/chat/direct` → 投研页；`/chat` 重定向到 `/chat/rag`；默认登录落地 `/chat/rag` |
 
 切换 Tab = 切换路由进入另一套页面，**不**把当前会话 ID 带到另一模式。
 
-**产品提示（与 §6.3 对齐）**：rag 页多轮气泡仅为历史展示，**不构成生成上下文**。rag 页勿做「基于上文的联想输入 / 续写提示 / 暗示系统记得指代」等功能，以免用户误以为系统记得上文；指代续问引导用户使用「自由对话」。
+**产品提示（与 §6.3 对齐）**：rag / 投研页多轮气泡仅为历史展示，**不构成生成上下文**。勿做「基于上文的联想输入」等暗示系统记得指代的功能。
 
 ### 7.2 两套页面 / Store
 
@@ -269,11 +272,9 @@ flowchart TD
 | rag | 现有 [`ChatView.vue`](../frontend/src/views/chat/ChatView.vue) + [`stores/chat.js`](../frontend/src/stores/chat.js)（固定 `mode: 'rag'`） |
 | direct | 新增如 `views/chat/DirectChatView.vue` + `stores/directChat.js`（固定 `mode: 'direct'`） |
 
-可复用组件：`ChatInput`、消息气泡列表。direct 空态文案单独一套（不写「知识库引用」）。
+可复用组件：`ChatInput`、消息气泡列表。direct 空态文案单独一套（投研示例话术）；助手消息 Markdown 安全渲染。
 
-**现网缺口（实现必拆）**：当前 [`MessageList.vue`](../frontend/src/components/chat/MessageList.vue) **已内嵌** `CitationList`、拒答文案，且空态写死「附带知识库引用」。不能原样给 direct 复用。实现时须拆成无引用的通用列表（或 props/插槽注入引用与空态），使 direct 页**零 import** `CitationList` / 拒答 UI。
-
-**CitationList / 拒答**：仅 rag 页使用。direct 页**直接不 import / 不挂载**（不要「引入了再 `v-if` 隐藏」）；后端虽返回 `rejected=false`、`citations=[]`，前端无需为这两字段做展示分支。
+**CitationList / 拒答**：仅 rag 页使用。direct 页**直接不 import / 不挂载**；后端返回 `rejected=false`、`citations=[]`。
 
 **复用约束**：可复用组件须为**无状态展示 / 交互组件**——不直接读取某个 Pinia store；消息列表、禁用态、发送回调、空态文案等一律由父页面通过 **props / emit / 插槽** 传入。两套 View 各自绑定自己的 store。
 
@@ -300,7 +301,7 @@ flowchart TD
 | 旧前端未传 `mode`（chat / 列表） | `POST` 默认按 `rag` 问答；`GET /api/conversations` 默认**只列 `rag`**（§5.2，已拍板） |
 | 表名仍带 `kh_` | 跑 `scripts/migrate_chat_dual_mode.py`：系统表→`sys_*`，业务表去前缀 |
 | 已有会话无 `mode` 列 | 对 `conversation` 表末尾加列 `NOT NULL DEFAULT 'rag'`（见 §4.1） |
-| 旧「对话」菜单 | 改为「知识库问答」指向 `/chat/rag`；新增「自由对话」指向 `/chat/direct`；`/chat` → `/chat/rag` |
+| 旧「对话」菜单 | 改为「知识库问答」指向 `/chat/rag`；「投研助手」指向 `/chat/direct`；`/chat` → `/chat/rag` |
 | 回归脚本 | 若有 `scripts/verify_phase*` 覆盖 chat，实现阶段按需增加 `mode` 用例（非本文必须交付） |
 
 **旧前端现状**：[`listConversations`](../frontend/src/api/chat.js) 与 `askChat` **均不传** `mode`。在 §5.2「不传默认只返回 `rag`」下，旧前端列表不会混入 `direct` 会话，因而也不会误开 `direct` 再触发混聊 `40001`。若有人用手工构造的 `conversationId` 指向 `direct` 且不传 `mode`（按 `rag` 续聊），仍会因会话 mode 不一致被拒——属预期，无需为旧客户端绕过校验。新前端两套入口不得跨模式复用 `conversationId`。
@@ -311,10 +312,10 @@ flowchart TD
 
 | 编号 | 标准 |
 |------|------|
-| A1 | 顶栏可在「知识库问答」与「自由对话」间切换，进入不同路由 |
+| A1 | 顶栏可在「知识库问答」与「投研助手」间切换，进入不同路由 |
 | A2 | rag 页提问仍走检索；有依据时带 citations，不足时 `rejected=true` |
 | A3 | rag 多轮续聊时，生成侧**不依赖**此前问答内容作为上下文（仅当前问 + 检索） |
-| A4 | direct 页提问不触发检索/Embedding；无引用区；可多轮且后轮能利用前轮上下文 |
+| A4 | direct 页提问不触发检索/Embedding；无引用区；现网产出投研报告（细节见投研验收） |
 | A5 | 在 rag 会话上用 `mode=direct`（或反之）请求 → 失败，明确错误，不写脏消息 |
 | A5b | 在 rag 页打开 `mode=direct` 的会话详情（或反之）→ 前端拦截并退回，不混渲染 |
 | A6 | 各页会话列表仅显示对应 `mode` 的会话；`GET /api/conversations` 不传 `mode` 时只返回 `rag` |
@@ -327,22 +328,8 @@ flowchart TD
 ## 10. 与主规格关系
 
 - RAG 检索、Rerank 门控、入库、RBAC 表结构等仍以 [knowledge-qa-design.md](./knowledge-qa-design.md) 与 phase1–4 为准；**双模式细节与系统表 `sys_` 前缀以本文为准**。
-- 主规格中「对话可带最近几条历史直接进生成 prompt」在本功能落地后，对 **`rag` 模式废止**；多轮历史仅 **`direct`** 使用。
-
-**须回写主规格，且与实现同一 PR 完成**（避免「代码已合、页面规格仍写旧行为」的漂移；不接受「批准后再另开 PR 紧随回写」作为默认节奏）：
-
-| 主文档位置（约） | 回写内容 |
-|------------------|----------|
-| §1 目标能力「对话可带最近几条历史…」 | 改为：仅 `direct` 生成带历史；`rag` 生成不带历史；并链到本文 |
-| §5 表名 | 系统表 `sys_*`；业务表无 `kh_`（§4.0） |
-| `conversation` 字段说明 | 补 `mode` 字段 |
-| §6 / 问答管线中「取最近 6 条历史」「历史 + 当前问题 + 片段」 | `rag` 路径改为无历史；注明 `direct` 见本文 |
-| §7 或前端相关「对话」入口 | 顶栏双入口 / 路由，链到本文 |
-| 批准清单 / 附录中「历史可直拼 prompt」类条目 | 与上对齐 |
-
-phase 文档中系统表名与「生成带 6 条历史」描述，建议在**同一实现 PR**内同步修订或加废止说明，避免单独漂移。
-
-- 本文批准后另写实现计划（Task / 命令 / Expected）；实现 PR 须包含：代码（系统表 rename + 实体同步 + dual-mode）+ 主规格（及 phase 必要修订）回写。
+- 主规格中「对话可带最近几条历史直接进生成 prompt」在双模式落地后对 **`rag` 废止**；投研落地后对 **`direct` 闲聊历史亦废止**（`direct` 内核见 [stock-research-agent-design.md](./stock-research-agent-design.md)）。
+- 系统表 `sys_*`、业务表去 `kh_`、`conversation.mode`、双路由仍以本文为准。
 
 ---
 
@@ -353,10 +340,10 @@ phase 文档中系统表名与「生成带 6 条历史」描述，建议在**同
 - [ ] 同接口加 `mode`；字段缺失与 `null` 均默认 `rag`；非法非空值才 `40001`
 - [ ] 列表不传 `mode` 默认只返回 `rag`（兼容旧前端）；新前端显式传 mode
 - [ ] 前端两套入口；复用组件 props 无 store；direct 不引入 CitationList/拒答
-- [ ] rag 分支不查询历史；direct 保留最近 6 条多轮
+- [ ] rag / direct 生成均不依赖闲聊历史（direct 内核见投研文档）
 - [ ] 系统表 → `sys_*`，业务表去 `kh_`（§4.0）；Chroma `kh_chunks` 不改
 - [ ] 存量：`conversation` 表末尾 `ADD COLUMN ... NOT NULL DEFAULT 'rag'`（无 AFTER/FIRST）
-- [ ] 实现 PR 内回写 [knowledge-qa-design.md](./knowledge-qa-design.md)（含系统表名与历史策略，§10）
+- [ ] 主规格与投研规格已与现网对齐
 - [ ] 验收标准可演示（含 A5b/A6/A8/A9）
 
 **批准人：**  

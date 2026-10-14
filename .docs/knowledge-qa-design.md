@@ -14,7 +14,12 @@
 | 3 文档入库与删除 | [phase/knowledge-qa-phase3-design.md](./phase/knowledge-qa-phase3-design.md) |
 | 4 问答与前端 | [phase/knowledge-qa-phase4-design.md](./phase/knowledge-qa-phase4-design.md) |
 
-**相关文档**：[chat-dual-mode-design.md](./chat-dual-mode-design.md)（双模式：知识库问答 `rag` / 自由对话 `direct`）
+**相关文档**：
+
+| 文档 | 说明 |
+|------|------|
+| [chat-dual-mode-design.md](./chat-dual-mode-design.md) | 双模式外壳：`rag` / `direct` 会话隔离、路由与 API |
+| [stock-research-agent-design.md](./stock-research-agent-design.md) | **`mode=direct` 现网实现**：投研 Multi-Agent（取代原闲聊） |
 
 ---
 
@@ -29,7 +34,8 @@ Knowledge Hub（本功能短名 **knowledge-qa**）把企业文档变成可自�
 - 支持 PDF / **docx** / text / Markdown 入库与列表管理（**同步入库**）
 - **文档库 = 全员共享库**：任意已登录用户可上传 / 列表 / 详情 / 删除全库文档；问答检索范围 = 全库
 - **混合检索**（Chroma 向量 + 内存 BM25 → RRF）→ **BGE Rerank 分数门控** → **带引用生成**；依据不足规则拒答
-- **rag 生成不带历史**；仅 **direct** 模式带最近 6 条历史（见 [chat-dual-mode-design.md](./chat-dual-mode-design.md)）；**检索用当前用户消息原文**（不改写、不拼历史）
+- **rag 生成不带历史**；**检索用当前用户消息原文**（不改写、不拼历史）
+- **双入口**：知识库问答 `/chat/rag`；投研助手 `/chat/direct`（`mode=direct` → Multi-Agent，见 [stock-research-agent-design.md](./stock-research-agent-design.md)；外壳见 [chat-dual-mode-design.md](./chat-dual-mode-design.md)）
 
 **交付目标**：本地可启动前后端；启动后可用种子账号 **`admin` / `123456`** 登录；亦可注册新用户；RBAC 表与种子数据可查；上传→入库→带引用问答主链路可演示；依据不足时拒答。
 
@@ -41,7 +47,8 @@ Knowledge Hub（本功能短名 **knowledge-qa**）把企业文档变成可自�
 
 | 层 | 选型 | 说明 |
 |----|------|------|
-| 前端 | Vue 3 + Vite + JavaScript + Element Plus + Pinia + Axios | 登录注册、知识库；知识库问答 `/chat/rag`、自由对话 `/chat/direct` |
+| 前端 | Vue 3 + Vite + JavaScript + Element Plus + Pinia + Axios | 登录注册、知识库；知识库问答 `/chat/rag`、投研助手 `/chat/direct` |
+| 投研 | LangGraph + 腾讯/新浪 HTTP + 可选 Redis + SMTP | 仅 `mode=direct`；见投研设计文档 |
 | 后端 | FastAPI + Uvicorn | REST；目录见 §2.3，模块见 §3 |
 | 问答管线 | 普通服务函数（`ChatOpenAI` / `OpenAIEmbeddings` + Rerank HTTP） | **混合检索 → Rerank → 生成/拒答** |
 | 关系库 | MySQL 8.0+ | 用户/RBAC、文档、chunk、会话（库名 `knowledge_hub`） |
@@ -82,10 +89,11 @@ uv pip install -r requirements.txt
 | Web | `fastapi`、`python-multipart` |
 | Config / DB | `pydantic-settings`、`sqlalchemy`、`pymysql`、`cryptography` |
 | Auth | `bcrypt`、`PyJWT` |
-| RAG / LLM | `langchain-core`、`langchain-openai`、`chromadb` |
+| RAG / LLM | `langchain-core`、`langchain-openai`、`chromadb`、`rank_bm25`、`jieba` |
 | Document parsing | `pymupdf`、`python-docx` |
+| 投研 | `langgraph`、`requests`、`redis`、`markdown` |
 
-说明：本机已有 `uvicorn` 不必写入。
+说明：本机已有 `uvicorn` 不必写入；完整锁定版本见 `backend/requirements.txt`。
 
 **配置键**（`backend/.env`；实现时补 `.env.example`）：
 
@@ -106,7 +114,9 @@ uv pip install -r requirements.txt
 | `RAG_RERANK_KEEP_TOP1_FLOOR` | 滤空时 Top1 兜底地板，默认 **0.15** |
 | `RAG_REJECT_MAX_DISTANCE` | 向量距离上限（仅 `filter_relevant` 调试用；正式问答不用） |
 | `RAG_RELATIVE_MAX_GAP` | 与 Top1 距离差（同上，调试用） |
-| （前端约定，非必须进 `.env`） | 入库 Axios `timeout` 建议 **600000**（10 分钟）；问答建议 **120000**（2 分钟） |
+| `REDIS_URL` | 可选；投研 A 股代码表缓存；空则跳过 |
+| `SMTP_*` / `RESEARCH_DEFAULT_EMAIL` / `RESEARCH_GRAPH_TIMEOUT_SEC` | 投研发信与图超时（默认 90s）；见投研设计文档 |
+| （前端约定，非必须进 `.env`） | 入库 Axios `timeout` 建议 **600000**（10 分钟）；问答/投研建议 **120000**（2 分钟） |
 
 前后端：Vite **5173** / FastAPI **8000**。CORS：`allow_origins` 读配置；`allow_headers` 含 `Authorization`；Token 在 **localStorage**（非 Cookie），`allow_credentials` 可 false。
 
@@ -119,20 +129,23 @@ knowledge-hub/
 ├── .docs/
 │   ├── knowledge-qa-design.md
 │   ├── chat-dual-mode-design.md
+│   ├── stock-research-agent-design.md
 │   └── phase/
 │       ├── knowledge-qa-phase1-design.md
 │       ├── knowledge-qa-phase2-design.md
 │       ├── knowledge-qa-phase3-design.md
 │       └── knowledge-qa-phase4-design.md
+├── .cursor/rules/               # Cursor 约定（overview / backend / frontend）
+├── scripts/                     # 仓库根：迁移 + verify_*.py
 ├── backend/
 │   ├── pyproject.toml
 │   ├── requirements.txt
 │   ├── .env
 │   ├── .env.example
+│   ├── scripts/                 # 部分 phase 回归脚本
 │   ├── data/
 │   │   ├── kb/
 │   │   └── chroma/
-│   ├── tests/
 │   └── app/
 │       ├── __init__.py
 │       ├── main.py
@@ -140,7 +153,11 @@ knowledge-hub/
 │       │   ├── config.py
 │       │   ├── db.py
 │       │   ├── errors.py
-│       │   └── response.py
+│       │   ├── response.py
+│       │   ├── chroma.py
+│       │   ├── audit.py
+│       │   ├── logging_util.py
+│       │   └── redis_client.py   # 可选 Redis
 │       ├── models/
 │       │   ├── user.py
 │       │   ├── rbac.py          # role / permission / 关联表
@@ -156,8 +173,14 @@ knowledge-hub/
 │       ├── services/            # 业务层
 │       │   ├── auth.py
 │       │   ├── ingest.py        # 入库/列表/删除
-│       │   ├── chat.py          # 检索 → 规则拒答/生成带引用
-│       │   └── qa.py            # 组 prompt、调 LLM
+│       │   ├── chat.py          # rag 检索生成 / direct → agent
+│       │   └── qa.py            # rag 组 prompt、调 LLM
+│       ├── agent/               # 投研 Multi-Agent（mode=direct）；拓扑见 graph.py
+│       │   ├── graph.py         # 固定拓扑 + 外层超时（勿再建顶层 app/graph/）
+│       │   ├── state.py
+│       │   ├── logging_util.py  # 图内 deadline 辅助
+│       │   ├── agents/          # coordinator / quote|market|news / writer / mailer
+│       │   └── tools/           # tencent / symbol / email / report_pdf
 │       ├── auth/                # 认证支撑
 │       │   ├── security.py      # bcrypt + PyJWT
 │       │   ├── deps.py          # JWT + 查库确认 ACTIVE
@@ -179,8 +202,11 @@ knowledge-hub/
     ├── index.html
     ├── .env.development
     └── src/
-        ├── main.js
+        ├── main.js              # 引入 assets/css/global.css
         ├── App.vue
+        ├── assets/
+        │   └── css/
+        │       └── global.css   # 全局样式唯一入口（无 styles/）
         ├── api/
         │   ├── http.js            # Bearer from localStorage；401→登录
         │   ├── auth.js
@@ -191,8 +217,11 @@ knowledge-hub/
         ├── stores/
         │   ├── user.js
         │   ├── document.js
+        │   ├── createChatStore.js   # rag / direct 共用工厂
         │   ├── chat.js              # 知识库问答
-        │   └── directChat.js        # 自由对话
+        │   └── directChat.js        # 投研助手
+        ├── utils/
+        │   └── markdown.js          # 助手 Markdown 安全渲染
         ├── views/
         │   ├── auth/
         │   │   ├── LoginView.vue
@@ -201,15 +230,15 @@ knowledge-hub/
         │   │   └── DocumentListView.vue
         │   └── chat/
         │       ├── ChatView.vue          # 知识库问答 /chat/rag
-        │       └── DirectChatView.vue    # 自由对话 /chat/direct
-        ├── components/
-        │   ├── ingest/
-        │   │   └── UploadPanel.vue
-        │   └── chat/
-        │       ├── MessageList.vue
-        │       ├── CitationList.vue
-        │       └── ChatInput.vue
-        └── styles/
+        │       └── DirectChatView.vue    # 投研助手 /chat/direct
+        └── components/
+            ├── ingest/
+            │   └── UploadPanel.vue
+            └── chat/
+                ├── ChatWorkspace.vue
+                ├── MessageList.vue
+                ├── CitationList.vue
+                └── ChatInput.vue
 ```
 
 **约定**：
@@ -220,7 +249,7 @@ knowledge-hub/
 | 前端 | Node v24.15.0；`npm run dev` → 5173 |
 | Token | **localStorage** + `Authorization: Bearer`（JWT） |
 | Token 过期 | 401 → 清 Token → 跳登录 |
-| 页面 | 登录、注册、文档管理；知识库问答 `/chat/rag`、自由对话 `/chat/direct` |
+| 页面 | 登录、注册、文档管理；知识库问答 `/chat/rag`、投研助手 `/chat/direct` |
 | 同名文件 | **拒绝上传**；删除为**物理删除**（先 Chroma 再库/文件，见 §4.3）后再传 |
 
 ---
@@ -267,7 +296,7 @@ knowledge-hub/
 - **会话创建（chat 懒建）**：`conversationId` **可选**；缺省 / `null` 时由 `/api/chat` **自动** `INSERT conversation`（归属当前用户，含 `mode`），响应带回 `conversationId`；前端「新对话」只清本地状态
 - 已传 `conversationId`：校验 `conversation.user_id == current_user.id`，否则 `40401`；请求 `mode` 须与会话一致（见 [chat-dual-mode-design.md](./chat-dual-mode-design.md)）
 - **rag 流程**：**混合检索 → Rerank 分数门控 → 空则拒答，否则 LLM 带引用生成**（生成**不带**历史）；检索与精排均用当前用户消息原文
-- **direct**：跳过检索，生成带最近 6 条历史；详见 [chat-dual-mode-design.md](./chat-dual-mode-design.md)
+- **direct**：跳过检索；现网为投研 Multi-Agent（无闲聊历史）；详见 [stock-research-agent-design.md](./stock-research-agent-design.md)
 
 ---
 
@@ -314,7 +343,7 @@ message + mode + 可选 conversationId（须已登录）
 LLM 失败：若本请求已建会话/已落 user，保留之；可写一条失败说明 assistant，或仅返回 50010
 ```
 
-说明：会话由 `/api/chat` 懒建；列表/详情/删除走 `/api/conversations`（仅本人）。**direct** 路径（无检索、带最近 6 条历史）见 [chat-dual-mode-design.md](./chat-dual-mode-design.md)。
+说明：会话由 `/api/chat` 懒建；列表/详情/删除走 `/api/conversations`（仅本人）。**direct** 路径（无检索、投研 Multi-Agent）见 [stock-research-agent-design.md](./stock-research-agent-design.md)；会话 mode 外壳见 [chat-dual-mode-design.md](./chat-dual-mode-design.md)。
 
 ### 4.3 删除（物理删除）
 
@@ -511,7 +540,7 @@ lifespan：
 
 - 检索 / 精排（仅 **rag**）：用**当前用户消息原文**（不改写、不拼历史）
 - **rag 生成**：不带对话历史（仅当前问题 + 检索片段）
-- **direct 生成**：带最近 6 条历史；无检索；见 [chat-dual-mode-design.md](./chat-dual-mode-design.md)
+- **direct**：无检索；投研图产出 `report_md`；见 [stock-research-agent-design.md](./stock-research-agent-design.md)
 - 后续可选：多轮按需 query rewrite，改写结果只用于检索
 
 ---
@@ -585,7 +614,7 @@ lifespan：
 | 认证 | `/api/auth` | `POST /register`、`POST /login`、`GET /me`（roles + permissions） |
 | 文档 | `/api/documents` | 上传、列表、详情、**物理删除**（先 Chroma）；共享库：任意已登录用户可操作全库 |
 | 会话 | `/api/conversations` | 列表 / 消息详情 / 删除；仅本人 |
-| 问答 | `/api/chat` | `conversationId` / `mode` 可选（缺省 `rag`）；缺省则懒建会话并返回 id；已有则校验归属与 mode；rag 检索范围 = 全库；direct 见 [chat-dual-mode](./chat-dual-mode-design.md) |
+| 问答 | `/api/chat` | `conversationId` / `mode` 可选（缺省 `rag`）；缺省则懒建会话并返回 id；已有则校验归属与 mode；rag 检索范围 = 全库；direct 见 [stock-research](./stock-research-agent-design.md) |
 | 健康 | `/api/health` | MySQL + Chroma |
 
 统一响应：`{ "code": 0, "message": "success", "data": {} }`
@@ -631,7 +660,7 @@ lifespan：
 
 - [ ] 入库：先算完再落库；失败回滚；同名 → 40901
 - [ ] 物理删除：先 Chroma（失败整单失败）再库/文件
-- [ ] 问答为「混合检索→Rerank→生成/拒答」；rag 生成不带历史；direct 带最近 6 条（见 [chat-dual-mode](./chat-dual-mode-design.md)）；检索用当前原文
+- [ ] 问答为「混合检索→Rerank→生成/拒答」；rag 生成不带历史；direct 为投研 Multi-Agent（见 [stock-research](./stock-research-agent-design.md)）；检索用当前原文
 - [ ] Chroma 最后写；失败简单回滚
 - [ ] 切分按字符；无标题按段落滑窗；仅 pdf/docx/md/txt；无正文 → 50001
 - [ ] JWT + 注册/登录；RBAC 表；lifespan 幂等种子含 `admin`/`123456`；API 只验登录
@@ -658,6 +687,6 @@ lifespan：
 | 删除 | 先 Chroma（失败整单失败）再 MySQL / 文件 |
 | 问答 | 混合检索 → Rerank 分数门控 → 规则拒答/一次生成；检索全库 |
 | 会话 | chat 懒建；`conversationId` 可选；列表/删仅本人 |
-| 多轮 | rag 生成不带历史；direct 带最近 6 条（见 [chat-dual-mode](./chat-dual-mode-design.md)）；检索/精排用当前原文 |
+| 多轮 | rag 生成不带历史；direct 每轮独立投研任务（见 [stock-research](./stock-research-agent-design.md)）；检索/精排用当前原文 |
 | 检索 | 向量 + BM25 → RRF → BGE Rerank；collection cosine |
 | 拒答 | 融合为空或精排分数门控后为空（软地板 0.05 + 相对 0.5 + Top1 兜底 0.15） |

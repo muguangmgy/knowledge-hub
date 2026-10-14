@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     DATABASE_URL: str
     CORS_ORIGINS: str = "http://localhost:5173"
     KB_DIR: str = "data/kb"
+    REDIS_URL: str = ""  # 例 redis://127.0.0.1:6379/0；空则跳过 Redis 缓存
 
     # --- JWT ---
     JWT_SECRET_KEY: str = "change-me"
@@ -54,6 +55,16 @@ class Settings(BaseSettings):
     RAG_RERANK_KEEP_TOP1_FLOOR: float = 0.15  # 滤完为空时，Top1≥此值则至少保留 Top1，避免短问误拒答
     RAG_REJECT_MAX_DISTANCE: float = 0.55  # 向量距离上限（仅 filter_relevant 调试用；正式问答以精排分数为准）
     RAG_RELATIVE_MAX_GAP: float = 0.15  # 与 Top1 距离差过大则丢（同上，调试用）
+
+    # --- 投研 Multi-Agent 邮件 / 超时 ---
+    SMTP_HOST: str = "smtp.qq.com"
+    SMTP_PORT: int = 465
+    SMTP_USER: str = ""
+    SMTP_PASSWORD: str = ""
+    SMTP_FROM: str = ""
+    SMTP_USE_SSL: bool = True
+    RESEARCH_DEFAULT_EMAIL: str = ""
+    RESEARCH_GRAPH_TIMEOUT_SEC: int = 90
 
     def resolve_path(self, value: str) -> Path:
         """相对路径锚定到 backend 根，避免受启动 cwd 影响。"""

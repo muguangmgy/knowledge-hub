@@ -25,3 +25,9 @@ jieba==0.42.1
 # Document parsing
 pymupdf==1.28.2
 python-docx==1.2.0
+
+# 投研 Multi-Agent（LangGraph 编排；行情/资讯/代码表均为 HTTP 直连）
+langgraph==0.6.11
+requests==2.34.2
+redis==6.4.0
+markdown==3.9

@@ -14,6 +14,8 @@ from app.models.document import Document
 
 @dataclass
 class Bm25Hit:
+    """BM25 检索命中项（对外返回）。"""
+
     chroma_id: str
     document_id: int
     chunk_id: int
@@ -25,6 +27,8 @@ class Bm25Hit:
 
 @dataclass
 class _DocEntry:
+    """内存索引条目（含分词）。"""
+
     chroma_id: str
     document_id: int
     chunk_id: int
@@ -56,6 +60,7 @@ def _index_text(title: str, filename: str, heading_path: str, content: str) -> s
 
 
 def _rebuild_locked() -> None:
+    """在已持锁前提下用当前 _entries 重建 BM25Okapi。"""
     global _bm25
     if not _entries:
         _bm25 = None

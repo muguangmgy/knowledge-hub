@@ -15,8 +15,8 @@ alwaysApply: false
 
 - `app/api/`：HTTP 路由，只做参数绑定 / Depends / 调 `services` / `ok()`
 - `app/services/`：业务与事务；抛 `AppError`
-- 支撑模块：`auth/`（deps/security/seed）、`ingest/`（parser/chunker）、`rag/`、`llm/`
-- 外部 IO（Embedding / LLM / Chroma）勿堆进 api
+- 支撑模块：`auth/`（deps/security/seed）、`ingest/`（parser/chunker）、`rag/`、`llm/`、`agent/`（投研 LangGraph）
+- 外部 IO（Embedding / LLM / Chroma / 行情 HTTP / SMTP）勿堆进 api；投研工具放 `app/agent/tools/`
 
 ```python
 # ❌ BAD：api 里写业务
@@ -45,3 +45,10 @@ def chat(...):
 - 配置只从 `app.common.config.Settings` / `.env` 读
 - 相对路径用 `settings.resolve_path` / `kb_dir` / `chroma_dir`（锚定 backend 根）
 - 跑服务用 `backend/.venv`，不要用系统全局 Python
+
+## 日志
+
+- 用 `logging.getLogger(__name__)`；文案经 `app.common.logging_util.event_msg`
+- 格式：`event=<域>.<动作> key=value`（如 `event=chat.ask_ok mode=rag user_id=1`）
+- 只打启动里程碑与关键业务结果（入库/删文档/登录注册/问答完成/投研完成）；不打密码、Token、长正文
+- INFO=成功里程碑；WARNING=降级；失败用 `logger.exception` 或带 `err=` 的 WARNING

@@ -22,6 +22,7 @@ class ConversationUpdateRequest(BaseModel):
     @field_validator("title")
     @classmethod
     def strip_title(cls, v: str) -> str:
+        """去掉首尾空白；空标题拒绝。"""
         cleaned = v.strip()
         if not cleaned:
             raise ValueError("标题不能为空")

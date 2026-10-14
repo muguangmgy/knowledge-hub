@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import logging
+import time
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.common.audit import touch
 from app.common.config import get_settings
 from app.common.errors import AppError, ErrorCode
+from app.common.logging_util import event_msg
 from app.models.conversation import Conversation
 from app.models.document import Document
 from app.models.message import Message
@@ -13,6 +17,8 @@ from app.models.user import User
 from app.rag.rerank import rerank_chunks
 from app.rag.retriever import retrieve
 from app.services import qa
+
+logger = logging.getLogger(__name__)
 
 # 合法会话 / 请求 mode；与 conversation.mode、前端路由约定一致
 CHAT_MODES = frozenset({"rag", "direct"})
@@ -63,6 +69,7 @@ def get_conversation_messages(db: Session, user: User, conversation_id: int) -> 
 def delete_conversation(db: Session, user: User, conversation_id: int) -> None:
     """删除会话及其消息；非本人 → 40401。"""
     conv = _get_owned_conversation(db, user, conversation_id)
+    mode = conv.mode
     messages = db.scalars(
         select(Message).where(Message.conversation_id == conv.id)
     ).all()
@@ -70,6 +77,14 @@ def delete_conversation(db: Session, user: User, conversation_id: int) -> None:
         db.delete(m)
     db.delete(conv)
     db.commit()
+    logger.info(
+        event_msg(
+            "chat.conversation_delete_ok",
+            user_id=user.id,
+            conversation_id=conversation_id,
+            mode=mode,
+        )
+    )
 
 
 def update_conversation_title(
@@ -98,7 +113,7 @@ def ask(
     2. 懒建会话并写入 mode，或续聊时校验 mode 与会话一致（不一致不写消息）
     3. 落库 user 消息后按 mode 分支：
        - rag → _ask_rag（检索，生成不带历史）
-       - direct → _ask_direct（不检索，带最近 6 条历史）
+       - direct → _ask_direct（投研 Multi-Agent，不检索）
     """
     settings = get_settings()
     chat_mode = normalize_chat_mode(mode)
@@ -138,37 +153,29 @@ def ask(
     db.flush()
 
     if chat_mode == "direct":
-        return _ask_direct(db, conv, user_msg, question)
+        return _ask_direct(db, user, conv, user_msg, question)
 
-    return _ask_rag(db, settings, conv, user_msg, question)
+    return _ask_rag(db, user, settings, conv, user_msg, question)
 
 
 def _ask_direct(
     db: Session,
+    user: User,
     conv: Conversation,
     user_msg: Message,
     question: str,
 ) -> dict:
-    """自由对话分支：取当前 user 消息之前最近 6 条历史，直调 LLM。
+    """投研 Multi-Agent 分支（原 direct 闲聊已替换）。
 
-    不调用 retrieve / rerank；响应恒为 rejected=false、citations=[]。
-    LLM 失败时保留 user 消息并写入失败说明 assistant，再抛出。
+    调用 run_research_graph；不检索、不带闲聊历史；rejected=false、citations=[]。
+    Writer LLM 等致命失败时保留 user 并写失败说明后抛出。
     """
-    # Message.id < 当前条，避免把本轮问题重复拼进 history
-    history_rows = db.scalars(
-        select(Message)
-        .where(Message.conversation_id == conv.id, Message.id < user_msg.id)
-        .order_by(Message.id.desc())
-        .limit(6)
-    ).all()
-    history = [
-        {"role": m.role, "content": m.content}
-        for m in reversed(history_rows)
-        if m.role in {"user", "assistant"}
-    ]
+    from app.agent import run_research_graph
 
+    t0 = time.perf_counter()
     try:
-        answer = qa.generate_direct_answer(question=question, history=history)
+        result = run_research_graph(question)
+        answer = result["report_md"]
     except AppError:
         fail_msg = Message(
             conversation_id=conv.id,
@@ -179,6 +186,15 @@ def _ask_direct(
         db.add(fail_msg)
         touch(conv)
         db.commit()
+        logger.warning(
+            event_msg(
+                "chat.ask_failed",
+                mode="direct",
+                user_id=user.id,
+                conversation_id=conv.id,
+                elapsed_ms=int((time.perf_counter() - t0) * 1000),
+            )
+        )
         raise
 
     assistant = Message(
@@ -190,6 +206,18 @@ def _ask_direct(
     db.add(assistant)
     touch(conv)
     db.commit()
+    logger.info(
+        event_msg(
+            "chat.ask_ok",
+            mode="direct",
+            user_id=user.id,
+            conversation_id=conv.id,
+            message_id=assistant.id,
+            timed_out=bool(result.get("timed_out")),
+            delivery=result.get("delivery_status") or "-",
+            elapsed_ms=int((time.perf_counter() - t0) * 1000),
+        )
+    )
     return {
         "conversationId": conv.id,
         "answer": answer,
@@ -201,6 +229,7 @@ def _ask_direct(
 
 def _ask_rag(
     db: Session,
+    user: User,
     settings,
     conv: Conversation,
     user_msg: Message,
@@ -211,6 +240,7 @@ def _ask_rag(
     故意不查询 / 不传入对话历史；仅用当前问题与精排片段。
     Embedding/检索失败抬为 50010；LLM 失败保留 user 并写失败说明。
     """
+    t0 = time.perf_counter()
     try:
         fused_chunks = retrieve(question)
         fused_doc_ids = {c.document_id for c in fused_chunks}
@@ -227,6 +257,16 @@ def _ask_rag(
             titles=titles,
         )
     except AppError as exc:
+        logger.warning(
+            event_msg(
+                "chat.ask_failed",
+                mode="rag",
+                user_id=user.id,
+                conversation_id=conv.id,
+                stage="retrieve",
+                err=exc.message,
+            )
+        )
         if exc.code == ErrorCode.INGEST_FAILED:
             raise AppError(ErrorCode.LLM_FAILED, exc.message, http_status=500) from exc
         raise
@@ -257,6 +297,16 @@ def _ask_rag(
             db.add(fail_msg)
             touch(conv)
             db.commit()
+            logger.warning(
+                event_msg(
+                    "chat.ask_failed",
+                    mode="rag",
+                    user_id=user.id,
+                    conversation_id=conv.id,
+                    stage="generate",
+                    elapsed_ms=int((time.perf_counter() - t0) * 1000),
+                )
+            )
             raise
 
     assistant = Message(
@@ -268,6 +318,18 @@ def _ask_rag(
     db.add(assistant)
     touch(conv)
     db.commit()
+    logger.info(
+        event_msg(
+            "chat.ask_ok",
+            mode="rag",
+            user_id=user.id,
+            conversation_id=conv.id,
+            message_id=assistant.id,
+            rejected=rejected,
+            citations=len(citations),
+            elapsed_ms=int((time.perf_counter() - t0) * 1000),
+        )
+    )
     return {
         "conversationId": conv.id,
         "answer": answer,

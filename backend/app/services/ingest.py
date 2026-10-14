@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import shutil
 from pathlib import Path
 
@@ -9,12 +10,15 @@ from sqlalchemy.orm import Session
 
 from app.common.config import get_settings
 from app.common.errors import AppError, ErrorCode
+from app.common.logging_util import event_msg
 from app.ingest.chunker import chunk_text
 from app.ingest.parser import detect_file_type, parse_bytes
 from app.models.chunk import Chunk
 from app.models.document import Document
 from app.rag import bm25_store, chroma_store
 from app.rag.embedding import embed_texts
+
+logger = logging.getLogger(__name__)
 
 
 def list_documents(db: Session) -> list[dict]:
@@ -136,6 +140,15 @@ def ingest_upload(db: Session, *, filename: str, data: bytes) -> dict:
         )
         db.commit()
         db.refresh(document)
+        logger.info(
+            event_msg(
+                "ingest.upload_ok",
+                document_id=document.id,
+                filename=safe_name,
+                chunks=len(chunk_rows),
+                size_bytes=size_bytes,
+            )
+        )
         return _doc_to_dict(document)
     except IntegrityError:
         db.rollback()
@@ -148,6 +161,9 @@ def ingest_upload(db: Session, *, filename: str, data: bytes) -> dict:
     except Exception as exc:
         db.rollback()
         _cleanup_partial(settings, document, file_path, chroma_ids)
+        logger.warning(
+            event_msg("ingest.upload_failed", filename=safe_name, err=exc)
+        )
         raise AppError(
             ErrorCode.INGEST_FAILED, f"入库失败: {exc}", http_status=500
         ) from exc
@@ -160,6 +176,7 @@ def delete_document(db: Session, document_id: int) -> None:
     if doc is None:
         raise AppError(ErrorCode.NOT_FOUND, "文档不存在", http_status=404)
 
+    filename = doc.filename
     chunks = db.scalars(
         select(Chunk).where(Chunk.document_id == document_id)
     ).all()
@@ -186,6 +203,15 @@ def delete_document(db: Session, document_id: int) -> None:
         file_path.unlink()
     if doc_dir.exists():
         shutil.rmtree(doc_dir, ignore_errors=True)
+
+    logger.info(
+        event_msg(
+            "ingest.delete_ok",
+            document_id=document_id,
+            filename=filename,
+            chunks=len(chroma_ids),
+        )
+    )
 
 
 def _cleanup_partial(

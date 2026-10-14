@@ -7,7 +7,7 @@
         :rows="2"
         :autosize="{ minRows: 2, maxRows: 6 }"
         :disabled="disabled"
-        placeholder="输入问题，Enter 发送，Shift+Enter 换行"
+        :placeholder="placeholder"
         resize="none"
         @keydown.enter.exact.prevent="onSend"
       />
@@ -31,6 +31,10 @@ defineProps({
   disabled: {
     type: Boolean,
     default: false,
+  },
+  placeholder: {
+    type: String,
+    default: '输入问题，Enter 发送，Shift+Enter 换行',
   },
 })
 

@@ -12,56 +12,61 @@ from app.common.chroma import open_chroma
 from app.common.config import get_settings
 from app.common.db import Base, SessionLocal, engine, ping_mysql
 from app.common.errors import AppError, ErrorCode
+from app.common.logging_util import event_msg, setup_app_logging
 from app.common.response import fail, ok
 import app.models  # noqa: F401  # 导入以注册 ORM 元数据，供 create_all
 
-
-def _setup_app_logging() -> None:
-    """uvicorn 默认只配了 uvicorn.*，app.* 的 INFO 不会出现在控制台。"""
-    app_logger = logging.getLogger("app")
-    if app_logger.handlers:
-        return
-    handler = logging.StreamHandler()
-    handler.setFormatter(
-        logging.Formatter("%(levelname)s [%(name)s] %(message)s")
-    )
-    app_logger.addHandler(handler)
-    app_logger.setLevel(logging.INFO)
-    app_logger.propagate = False
-
-
-_setup_app_logging()
+setup_app_logging()
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     """启动：探活 MySQL → 建表 → 种子 → Chroma → BM25 全量重建。任一步失败则进程起不来。"""
     settings = get_settings()
+    logger.info(event_msg("startup.begin"))
     settings.kb_dir.mkdir(parents=True, exist_ok=True)
 
     ping_mysql()
+    logger.info(event_msg("startup.mysql_ok"))
+
     Base.metadata.create_all(bind=engine)
+    logger.info(event_msg("startup.db_schema_ok"))
 
     db = SessionLocal()
     try:
         run_seed(db)
+        logger.info(event_msg("startup.seed_ok"))
     except Exception:
         db.rollback()
+        logger.exception(event_msg("startup.seed_failed"))
         raise
     finally:
         db.close()
 
     open_chroma(settings)
+    logger.info(event_msg("startup.chroma_ok", path=settings.chroma_dir))
 
     # BM25 索引从 MySQL 全量重建（与已入库切片对齐）
     from app.rag import bm25_store
 
     bm25_db = SessionLocal()
     try:
-        bm25_store.rebuild_from_db(bm25_db)
+        n = bm25_store.rebuild_from_db(bm25_db)
+        logger.info(event_msg("startup.bm25_ok", chunks=n))
     finally:
         bm25_db.close()
 
+    # 投研：预热 A 股代码表（Redis → 否则新浪节点）；失败不挡启动
+    try:
+        from app.agent.tools.symbol import warm_symbol_cache
+
+        rows = warm_symbol_cache()
+        logger.info(event_msg("startup.symbol_warm_ok", rows=rows))
+    except Exception as exc:
+        logger.warning(event_msg("startup.symbol_warm_failed", err=exc))
+
+    logger.info(event_msg("startup.ready"))
     yield
 
 
