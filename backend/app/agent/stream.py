@@ -18,8 +18,10 @@ from app.common.logging_util import event_msg
 
 logger = logging.getLogger(__name__)
 
+# 单节点等待超过该秒数仍未完成 → yield ping，避免 SSE 空闲被代理掐断
 HEARTBEAT_SEC = 15.0
 
+# stage 事件默认中文文案（前端 stageMessage / 输入框提示条）
 _STAGE_MSG = {
     "coordinator": "正在解析投研意图…",
     "quote": "正在拉取行情…",
@@ -39,7 +41,9 @@ def iter_research_stream(
     """增量投研：yield stage/delta/ping；成功 final；取消 cancelled。
 
     不落库；仅未取消时执行 Mailer。闸门语义与同步路径对齐。
+    步骤：初始化 → Coordinator →（可选）并行 Analyst → Writer → Mailer → final。
     """
+    # --- 0. 截止时间 + 共享 state（与同步 run_research_graph 字段对齐）---
     settings = get_settings()
     timeout_sec = max(1, int(settings.RESEARCH_GRAPH_TIMEOUT_SEC or 90))
     deadline_ts = time.time() + timeout_sec
@@ -48,7 +52,7 @@ def iter_research_stream(
     state: dict[str, Any] = {
         "user_input": user_input,
         "intent": {},
-        "skip_analysts": True,
+        "skip_analysts": True,  # Coordinator 认出有效标的后才会改 False
         "deadline_ts": deadline_ts,
         "quote_data": None,
         "market_data": None,
@@ -60,6 +64,7 @@ def iter_research_stream(
         "delivery_status": "",
     }
 
+    # --- 1. Coordinator：先推 stage，再跑节点；结果 merge 进 state ---
     yield _stage("coordinator")
     if should_cancel():
         yield {"event": "cancelled"}
@@ -68,12 +73,13 @@ def iter_research_stream(
     for ev in _run_node_with_heartbeat(
         lambda: coordinator_node(state), should_cancel
     ):
+        # ping / cancelled 原样上抛；_result 的 patch 写回 state 后结束等待
         if ev.get("event") in ("ping", "cancelled"):
             yield ev
             if ev.get("event") == "cancelled":
                 return
             continue
-        state.update(ev.get("data") or {})
+        state.update(ev.get("data") or {})  # 典型含 intent / skip_analysts
         break
 
     if _past_deadline(state):
@@ -83,6 +89,7 @@ def iter_research_stream(
         yield {"event": "cancelled"}
         return
 
+    # --- 2. 并行 Analyst：有标的且未超时才跑；每路完成推 stage:quote|market|… ---
     if not state.get("skip_analysts") and not state.get("timed_out"):
         for ev in _run_analysts_parallel(state, should_cancel):
             yield ev
@@ -95,9 +102,11 @@ def iter_research_stream(
         yield {"event": "cancelled"}
         return
 
+    # Writer 前再卡一次 deadline（Analyst 跳过时也要标记超时）
     if _past_deadline(state):
         state["timed_out"] = True
 
+    # --- 3. Writer：流式 delta；超时/无标的走硬编码文案（hardcoded 非 None）---
     yield _stage("writer")
     if should_cancel():
         yield {"event": "cancelled"}
@@ -120,6 +129,7 @@ def iter_research_stream(
         yield {"event": "cancelled"}
         return
 
+    # --- 4. Mailer：取消则不发信；超时/无标的时 stage 文案改为「已跳过发送…」---
     skip_mail_hint = bool(state.get("timed_out") or state.get("skip_analysts"))
     yield _stage(
         "mailer",
@@ -136,15 +146,18 @@ def iter_research_stream(
             if ev.get("event") == "cancelled":
                 return
             continue
+        # patch 可含 delivery_status，以及追加到 report_md 的投递说明
         state.update(ev.get("data") or {})
         break
 
+    # Mailer 追加的后缀（免责声明后半 /「报告已发送至…」）再推一条 delta，供前端续写
     final_report = (state.get("report_md") or pre_mail).strip()
     if final_report.startswith(report_body):
         suffix = final_report[len(report_body) :]
         if suffix:
             yield {"event": "delta", "data": {"text": suffix}}
 
+    # --- 5. final：给 chat 层落库用（不直接发给前端；会被转成 done）---
     out = {
         "report_md": final_report or "分析未生成内容。\n\n未发送邮件。",
         "delivery_status": state.get("delivery_status") or "",
@@ -167,6 +180,7 @@ def iter_research_stream(
 
 def _stage(name: str, message: str | None = None) -> dict[str, Any]:
     """组装 stage 事件；message 缺省用内置中文文案。"""
+    # 形如 {"event":"stage","data":{"stage":"quote","message":"正在拉取行情…"}}
     return {
         "event": "stage",
         "data": {"stage": name, "message": message or _STAGE_MSG.get(name, name)},
@@ -175,6 +189,7 @@ def _stage(name: str, message: str | None = None) -> dict[str, Any]:
 
 def _past_deadline(state: dict) -> bool:
     """是否已超过 state.deadline_ts。"""
+    # deadline_ts 缺省/为 0 视为未设截止，不算超时
     ts = state.get("deadline_ts")
     return bool(ts and time.time() > float(ts))
 
@@ -183,18 +198,27 @@ def _run_node_with_heartbeat(
     fn: Callable[[], dict],
     should_cancel: Callable[[], bool],
 ) -> Iterator[dict[str, Any]]:
-    """在工作线程跑节点；等待期间定期 yield ping；完成 yield _result。"""
+    """在工作线程跑节点；等待期间定期 yield ping；完成 yield _result。
+
+    调用方应把 ``_result.data`` merge 进 state；ping/cancelled 原样上抛。
+    ``_result`` 仅供本模块内部，chat/API 层不会写成 SSE。
+    """
+    # 单线程池：节点同步阻塞（HTTP/LLM）不占住生成器轮询
     with ThreadPoolExecutor(max_workers=1) as ex:
         fut = ex.submit(fn)
         while True:
+            # --- 取消优先：不再等节点返回 ---
             if should_cancel():
                 yield {"event": "cancelled"}
                 return
             try:
+                # 最多等 HEARTBEAT_SEC；超时则抛 FuturesTimeoutError → ping
                 patch = fut.result(timeout=HEARTBEAT_SEC)
+                # 节点返回的 state patch（如 intent / report_md / delivery_status）
                 yield {"event": "_result", "data": patch}
                 return
             except FuturesTimeoutError:
+                # 保活：API 会转成 SSE comment ``: ping``
                 yield {"event": "ping"}
 
 
@@ -202,7 +226,12 @@ def _run_analysts_parallel(
     state: dict[str, Any],
     should_cancel: Callable[[], bool],
 ) -> Iterator[dict[str, Any]]:
-    """并行跑 quote/market/news/finance；每路完成推对应 stage，空闲时 ping。"""
+    """并行跑 quote/market/news/finance；每路完成推对应 stage，空闲时 ping。
+
+    四路共享同一 state 引用提交；完成一路立刻 merge + yield stage（顺序不保证）。
+    超时则标 timed_out 并返回（不取消已在跑的 future，后续 Writer 走超时文案）。
+    """
+    # --- 1. 四路同时提交 ---
     jobs = {
         "quote": quote_analyst_node,
         "market": market_analyst_node,
@@ -213,12 +242,15 @@ def _run_analysts_parallel(
         futs = {name: ex.submit(fn, state) for name, fn in jobs.items()}
         pending = set(futs.keys())
         while pending:
+            # --- 2. 取消 / 全局 deadline 闸门 ---
             if should_cancel():
                 yield {"event": "cancelled"}
                 return
             if _past_deadline(state):
                 state["timed_out"] = True
                 return
+
+            # --- 3. 收割已完成的 future，merge patch，推 stage ---
             done_any = False
             for name in list(pending):
                 fut = futs[name]
@@ -229,13 +261,17 @@ def _run_analysts_parallel(
                 try:
                     patch = fut.result() or {}
                 except Exception as exc:
+                    # 单路异常不中断其它路，记入 errors 供 Writer 降级
                     patch = {"errors": [f"{name}: {exc}"]}
                 if "errors" in patch:
+                    # 并行 merge：与 Annotated[list, operator.add] 语义对齐（手动累加）
                     errs = list(state.get("errors") or [])
                     errs.extend(patch.get("errors") or [])
                     patch = {**patch, "errors": errs}
                 state.update(patch)
-                yield _stage(name)
+                yield _stage(name)  # stage 名即 quote|market|news|finance
+
+            # --- 4. 本轮无人完成：ping + 短睡，避免空转打满 CPU ---
             if not done_any:
                 yield {"event": "ping"}
                 time.sleep(min(1.0, HEARTBEAT_SEC))
