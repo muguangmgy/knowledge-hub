@@ -37,14 +37,20 @@ def strip_delivery_notes(markdown: str) -> str:
 
 
 def markdown_to_pdf_bytes(markdown: str) -> bytes:
-    """Markdown → HTML → PDF（PyMuPDF Story，无额外系统依赖）。"""
+    """Markdown → HTML → PDF（PyMuPDF Story，无额外系统依赖）。
+
+    启用 nl2br，与前端 marked ``breaks: true`` 对齐单换行版式；
+    生成前剥掉投递说明（不进 PDF）。
+    """
     import markdown as md
     import pymupdf
 
     clean = strip_delivery_notes(markdown)
+    # nl2br：与前端 marked breaks:true 对齐，单换行保留为 <br>
+    # （否则「报告日期/股票代码…」在 PDF 会被挤成一行）
     body = md.markdown(
         clean,
-        extensions=["tables", "fenced_code", "sane_lists"],
+        extensions=["tables", "fenced_code", "sane_lists", "nl2br"],
     )
     html = (
         "<!DOCTYPE html><html><head><meta charset='utf-8'>"

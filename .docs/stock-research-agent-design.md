@@ -39,12 +39,13 @@
 | 后端 | `backend/app/agent/`（state、graph、agents、tools） |
 | 对话 | `_ask_direct` → `run_research_graph`；停用闲聊补全 |
 | 配置 | `SMTP_*`、`RESEARCH_DEFAULT_EMAIL`、`REDIS_URL`（可选）；`langgraph`、`requests`、`redis`、`markdown` |
-| 前端 | `/chat/direct`；空态文案；助手 Markdown 渲染；Axios **120s**；顶栏「投研助手」 |
+| 前端 | `/chat/direct`；空态文案；助手 Markdown 渲染；UI 走 SSE（阶段 + Writer 流）；顶栏「投研助手」 |
 
 ### 2.2 非目标
 
 - 改 RAG；第三种 mode；保留 `direct` 闲聊
-- 开放 Supervisor、Agent 辩论/投票、SSE、短信、续指令、checkpointer
+- 开放 Supervisor、Agent 辩论/投票、短信、续指令、checkpointer
+- ~~SSE~~ → 传输层流式见 [chat-sse-design.md](./chat-sse-design.md)；本规格业务闸门（超时/发信）不变
 - 独立模型/temperature、发信权限拆分、限流/队列
 - 不保证强杀卡住的上游 HTTP；只保证超时**不发信**且 HTTP 尽快返回
 - MVP **不**做按 `tasks` 动态裁剪 Analyst（三路固定并行：quote / market / news）
@@ -69,11 +70,11 @@
 
 ```mermaid
 flowchart TD
-  client[前端 /chat/direct] --> postChat["POST /api/chat mode=direct"]
+  client[前端 /chat/direct] --> postChat["POST /api/chat 或 /api/chat/stream"]
   postChat --> resolveConv[懒建或校验 mode]
   resolveConv --> saveUser[落库 user]
-  saveUser --> askDirect["_ask_direct 同步"]
-  askDirect --> runGraph["run_research_graph"]
+  saveUser --> askDirect["_ask_direct 或流式 iter_research_stream"]
+  askDirect --> runGraph["同步 graph.invoke / 流式增量"]
   runGraph --> coord[CoordinatorAgent]
   coord -->|有标的| fanOut[并行]
   coord -->|无标的 skip_analysts| writer[WriterAgent]
@@ -221,7 +222,12 @@ def run_research_graph(user_input: str) -> dict:
 
 ## 6. API
 
-外壳不变。`POST /api/chat`：`message`、`conversationId`、`mode=direct`（缺省仍 `rag`）。
+外壳：`message`、`conversationId`、`mode=direct`（缺省仍 `rag`）。
+
+| 接口 | 说明 |
+|------|------|
+| `POST /api/chat` | 同步整包；脚本/兼容；`answer` = `report_md` |
+| `POST /api/chat/stream` | UI 主路径 SSE；stage + Writer `delta`；见 [chat-sse-design.md](./chat-sse-design.md) |
 
 | 相对原 direct | 本规格 |
 |---------------|--------|
@@ -229,7 +235,7 @@ def run_research_graph(user_input: str) -> dict:
 | 无工具 | 腾讯 HTTP + 新浪代码表 + SMTP |
 | `rejected`/`citations` | 仍为 `false` / `[]` |
 
-混聊 `40001` 不变。列表/路由仍 `mode=direct`、`/chat/direct`。`answer` = `report_md`。
+混聊 `40001` 不变。列表/路由仍 `mode=direct`、`/chat/direct`。
 
 ---
 
@@ -287,7 +293,13 @@ with ThreadPoolExecutor(max_workers=1) as ex:
 
 #### 7.3.3 前端与代理
 
-前端 Axios **120s**；代理 `proxy_read_timeout` ≥ 120s。
+- **同步**路径：Axios **120s**；代理 `proxy_read_timeout` ≥ 120s。
+- **SSE**路径：`fetch` 流式；Vite `/api/chat/stream` 单独代理（关缓冲）；详见 [chat-sse-design.md](./chat-sse-design.md) §5.1 / §8。
+- 同步 `run_research_graph` 仍须图内 deadline + 外层线程池（§7.3.1–7.3.2）；流式用增量执行，禁止整图阻塞假流式。
+
+#### 7.3.4 PDF 与网页对齐
+
+Mailer 生成 PDF 时 Markdown 须启用 `nl2br`（与前端 `marked` `breaks: true` 一致），避免「报告日期/股票代码…」在 PDF 被挤成一行。投递说明仍只进聊天、不进 PDF。
 
 ---
 
@@ -298,8 +310,9 @@ with ThreadPoolExecutor(max_workers=1) as ex:
 | 路由/Store | `/chat/direct`、`mode=direct` |
 | 空态 | 「分析贵州茅台近日行情发到我邮箱」 |
 | 顶栏 | 「投研助手」 |
-| 渲染 | 助手消息 Markdown 安全渲染（表格/标题） |
-| 超时 | 120s |
+| 渲染 | 助手消息 Markdown 安全渲染（表格/标题）；`breaks: true` |
+| 传输 | UI 走 `askChatStream`；展示 `stage`；可停止 |
+| 等待 | 连接建议 ≥ 120s（与图超时对齐） |
 
 ---
 

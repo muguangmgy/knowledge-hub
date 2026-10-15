@@ -1,10 +1,20 @@
 from __future__ import annotations
 
-from app.llm.client import chat_completion
+from collections.abc import Iterator
+
+from app.llm.client import chat_completion, chat_completion_stream
 from app.rag.retriever import RetrievedChunk
 
 # 规则拒答固定话术（rejected=true，业务仍 code=0）
 REJECT_REPLY = "依据不足，无法基于知识库回答该问题。"
+
+_SYSTEM = (
+    "你是企业知识库助手。只能依据给定检索片段回答问题，并在相关句子后用 [n] 标注来源编号。"
+    "只根据已给出的片段作答：片段有多少信息就答多少，不要编造缺失内容；"
+    "也不要输出「原文未完整」「内容缺失」「依据不足」等元说明"
+    "（整题确实无法回答时除外，此时直接说无法基于知识库回答）。"
+)
+
 
 def build_citations(chunks: list[RetrievedChunk], *, titles: dict[int, str]) -> list[dict]:
     """按检索顺序生成短摘录引用列表，index 从 1 起。"""
@@ -26,13 +36,16 @@ def build_citations(chunks: list[RetrievedChunk], *, titles: dict[int, str]) -> 
     return citations
 
 
-def generate_answer(
+def build_rag_messages(
     *,
     question: str,
     chunks: list[RetrievedChunk],
     titles: dict[int, str],
-) -> str:
-    """拼 system + 当前问题与片段（无对话历史）；要求答案用 [n] 标注。"""
+) -> list[dict[str, str]]:
+    """拼 system + 当前问题与片段（无对话历史）。
+
+    `generate_answer` / `generate_answer_stream` 必须共用本函数，避免双份 prompt。
+    """
     context_parts: list[str] = []
     for i, c in enumerate(chunks, start=1):
         title = titles.get(c.document_id) or c.filename
@@ -40,18 +53,34 @@ def generate_answer(
             f"[{i}] 文档={title} | 小节={c.heading_path or '正文'}\n{c.content}"
         )
     context = "\n\n".join(context_parts)
-
-    system = (
-        "你是企业知识库助手。只能依据给定检索片段回答问题，并在相关句子后用 [n] 标注来源编号。"
-        "只根据已给出的片段作答：片段有多少信息就答多少，不要编造缺失内容；"
-        "也不要输出「原文未完整」「内容缺失」「依据不足」等元说明"
-        "（整题确实无法回答时除外，此时直接说无法基于知识库回答）。"
-    )
-    messages: list[dict[str, str]] = [
-        {"role": "system", "content": system},
+    return [
+        {"role": "system", "content": _SYSTEM},
         {
             "role": "user",
             "content": f"检索片段：\n{context}\n\n用户问题：{question}",
         },
     ]
-    return chat_completion(messages)
+
+
+def generate_answer(
+    *,
+    question: str,
+    chunks: list[RetrievedChunk],
+    titles: dict[int, str],
+) -> str:
+    """非流式生成；要求答案用 [n] 标注。"""
+    return chat_completion(
+        build_rag_messages(question=question, chunks=chunks, titles=titles)
+    )
+
+
+def generate_answer_stream(
+    *,
+    question: str,
+    chunks: list[RetrievedChunk],
+    titles: dict[int, str],
+) -> Iterator[str]:
+    """流式生成；prompt 与 `generate_answer` 同源，逐段 yield 正文增量。"""
+    yield from chat_completion_stream(
+        build_rag_messages(question=question, chunks=chunks, titles=titles)
+    )

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Callable, Iterator
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -23,6 +25,7 @@ logger = logging.getLogger(__name__)
 # 合法会话 / 请求 mode；与 conversation.mode、前端路由约定一致
 CHAT_MODES = frozenset({"rag", "direct"})
 DEFAULT_CHAT_MODE = "rag"
+_FAIL_REPLY = "生成答案失败，请稍后重试。"
 
 
 def normalize_chat_mode(mode: str | None) -> str:
@@ -116,13 +119,92 @@ def ask(
        - direct → _ask_direct（投研 Multi-Agent，不检索）
     """
     settings = get_settings()
-    chat_mode = normalize_chat_mode(mode)
+    chat_mode, question, conv, _user_msg = _prepare_ask(
+        db, user, message=message, conversation_id=conversation_id, mode=mode
+    )
 
+    if chat_mode == "direct":
+        return _ask_direct(db, user, conv, question)
+
+    return _ask_rag(db, user, settings, conv, question)
+
+
+def validate_ask_preflight(
+    db: Session,
+    user: User,
+    *,
+    message: str,
+    conversation_id: int | None,
+    mode: str | None = None,
+) -> str:
+    """建流前校验（不写库）；返回规范化 mode。失败抛 AppError。"""
+    chat_mode = normalize_chat_mode(mode)
+    question = (message or "").strip()
+    if not question:
+        raise AppError(ErrorCode.INTERNAL, "消息不能为空", http_status=400)
+    if conversation_id is not None:
+        conv = _get_owned_conversation(db, user, conversation_id)
+        if conv.mode != chat_mode:
+            raise AppError(
+                ErrorCode.BAD_REQUEST,
+                "会话模式不匹配，不允许混聊",
+                http_status=400,
+            )
+    return chat_mode
+
+
+def ask_stream(
+    db: Session,
+    user: User,
+    *,
+    message: str,
+    conversation_id: int | None,
+    mode: str | None = None,
+    should_cancel: Callable[[], bool] | None = None,
+) -> Iterator[dict[str, Any]]:
+    """SSE 问答入口（由 POST /api/chat/stream 调用）。
+
+    先 commit user 再推 meta；按 mode 分支 rag/direct。
+    yield 形如 ``{"event": "...", "data": {...}}``；
+    event 含 meta/stage/citations/delta/done/error/ping/cancelled。
+    should_cancel 为真时尽快停止；不落半成品 assistant。
+    """
+    cancel = should_cancel or (lambda: False)
+    settings = get_settings()
+    chat_mode, question, conv, _user_msg = _prepare_ask(
+        db, user, message=message, conversation_id=conversation_id, mode=mode
+    )
+    # 流式：先 commit user，再推 meta（§6）
+    db.commit()
+    yield {
+        "event": "meta",
+        "data": {"conversationId": conv.id, "mode": chat_mode},
+    }
+    if cancel():
+        yield {"event": "cancelled"}
+        return
+
+    if chat_mode == "direct":
+        yield from _ask_direct_stream(db, user, conv, question, cancel)
+        return
+
+    yield from _ask_rag_stream(db, user, settings, conv, question, cancel)
+
+
+def _prepare_ask(
+    db: Session,
+    user: User,
+    *,
+    message: str,
+    conversation_id: int | None,
+    mode: str | None,
+) -> tuple[str, str, Conversation, Message]:
+    """规范化 mode、懒建/校验会话、写入 user 消息（flush，未 commit）。"""
+    chat_mode = normalize_chat_mode(mode)
     question = (message or "").strip()
     if not question:
         raise AppError(ErrorCode.INTERNAL, "消息不能为空", http_status=400)
 
-    # 懒建：写入 mode；续聊：mode 必须与会话一致
     if conversation_id is None:
         conv = Conversation(
             user_id=user.id,
@@ -151,18 +233,13 @@ def ask(
     )
     db.add(user_msg)
     db.flush()
-
-    if chat_mode == "direct":
-        return _ask_direct(db, user, conv, user_msg, question)
-
-    return _ask_rag(db, user, settings, conv, user_msg, question)
+    return chat_mode, question, conv, user_msg
 
 
 def _ask_direct(
     db: Session,
     user: User,
     conv: Conversation,
-    user_msg: Message,
     question: str,
 ) -> dict:
     """投研 Multi-Agent 分支（原 direct 闲聊已替换）。
@@ -177,15 +254,7 @@ def _ask_direct(
         result = run_research_graph(question)
         answer = result["report_md"]
     except AppError:
-        fail_msg = Message(
-            conversation_id=conv.id,
-            role="assistant",
-            content="生成答案失败，请稍后重试。",
-            citations=None,
-        )
-        db.add(fail_msg)
-        touch(conv)
-        db.commit()
+        _commit_fail_assistant(db, conv)
         logger.warning(
             event_msg(
                 "chat.ask_failed",
@@ -197,15 +266,7 @@ def _ask_direct(
         )
         raise
 
-    assistant = Message(
-        conversation_id=conv.id,
-        role="assistant",
-        content=answer,
-        citations=None,
-    )
-    db.add(assistant)
-    touch(conv)
-    db.commit()
+    assistant = _commit_assistant(db, conv, answer, citations=None)
     logger.info(
         event_msg(
             "chat.ask_ok",
@@ -227,12 +288,98 @@ def _ask_direct(
     }
 
 
+def _ask_direct_stream(
+    db: Session,
+    user: User,
+    conv: Conversation,
+    question: str,
+    cancel: Callable[[], bool],
+) -> Iterator[dict[str, Any]]:
+    """投研 SSE 分支：转发 iter_research_stream 的 stage/delta/ping。
+
+    final → 落库 assistant 并转为 done；LLM 失败落库失败文案后 done（不抛）。
+    取消则 cancelled，不落库、不发信。
+    """
+    from app.agent.stream import iter_research_stream
+
+    t0 = time.perf_counter()
+    try:
+        for ev in iter_research_stream(question, should_cancel=cancel):
+            et = ev.get("event")
+            if et == "cancelled":
+                yield ev
+                return
+            if et == "ping":
+                yield ev
+                continue
+            if et == "final":
+                result = ev.get("data") or {}
+                answer = result.get("report_md") or ""
+                assistant = _commit_assistant(db, conv, answer, citations=None)
+                logger.info(
+                    event_msg(
+                        "chat.ask_ok",
+                        mode="direct",
+                        user_id=user.id,
+                        conversation_id=conv.id,
+                        message_id=assistant.id,
+                        timed_out=bool(result.get("timed_out")),
+                        delivery=result.get("delivery_status") or "-",
+                        elapsed_ms=int((time.perf_counter() - t0) * 1000),
+                        stream=1,
+                    )
+                )
+                yield {
+                    "event": "done",
+                    "data": {
+                        "conversationId": conv.id,
+                        "messageId": assistant.id,
+                        "answer": answer,
+                        "rejected": False,
+                        "citations": [],
+                        "timedOut": bool(result.get("timed_out")),
+                        "deliveryStatus": result.get("delivery_status") or "",
+                    },
+                }
+                return
+            yield ev
+    except AppError as exc:
+        if cancel():
+            yield {"event": "cancelled"}
+            return
+        assistant = _commit_fail_assistant(db, conv)
+        logger.warning(
+            event_msg(
+                "chat.ask_failed",
+                mode="direct",
+                user_id=user.id,
+                conversation_id=conv.id,
+                elapsed_ms=int((time.perf_counter() - t0) * 1000),
+                stream=1,
+            )
+        )
+        yield {
+            "event": "done",
+            "data": {
+                "conversationId": conv.id,
+                "messageId": assistant.id,
+                "answer": _FAIL_REPLY,
+                "rejected": False,
+                "citations": [],
+                "timedOut": False,
+                "deliveryStatus": "",
+            },
+        }
+        # 同步路径会再 raise；流式用 done 收口，不再 raise
+        _ = exc
+        return
+
+
 def _ask_rag(
     db: Session,
     user: User,
     settings,
     conv: Conversation,
-    user_msg: Message,
     question: str,
 ) -> dict:
     """知识库问答分支：retrieve → rerank → 拒答或带引用生成。
@@ -242,20 +389,7 @@ def _ask_rag(
     """
     t0 = time.perf_counter()
     try:
-        fused_chunks = retrieve(question)
-        fused_doc_ids = {c.document_id for c in fused_chunks}
-        titles: dict[int, str] = {}
-        if fused_doc_ids:
-            docs = db.scalars(
-                select(Document).where(Document.id.in_(fused_doc_ids))
-            ).all()
-            titles = {d.id: d.title for d in docs}
-        ranked_chunks = rerank_chunks(
-            question,
-            fused_chunks,
-            top_n=settings.RAG_TOP_K,
-            titles=titles,
-        )
+        chunks, titles, citations = _retrieve_and_rank(db, settings, question)
     except AppError as exc:
         logger.warning(
             event_msg(
@@ -271,16 +405,11 @@ def _ask_rag(
             raise AppError(ErrorCode.LLM_FAILED, exc.message, http_status=500) from exc
         raise
 
-    chunks = ranked_chunks
     rejected = False
-    citations: list[dict] = []
     if not chunks:
         rejected = True
         answer = qa.REJECT_REPLY
     else:
-        doc_ids = {c.document_id for c in chunks}
-        titles = {i: titles[i] for i in doc_ids if i in titles}
-        citations = qa.build_citations(chunks, titles=titles)
         try:
             answer = qa.generate_answer(
                 question=question,
@@ -288,15 +417,7 @@ def _ask_rag(
                 titles=titles,
             )
         except AppError:
-            fail_msg = Message(
-                conversation_id=conv.id,
-                role="assistant",
-                content="生成答案失败，请稍后重试。",
-                citations=None,
-            )
-            db.add(fail_msg)
-            touch(conv)
-            db.commit()
+            _commit_fail_assistant(db, conv)
             logger.warning(
                 event_msg(
                     "chat.ask_failed",
@@ -309,15 +430,9 @@ def _ask_rag(
             )
             raise
 
-    assistant = Message(
-        conversation_id=conv.id,
-        role="assistant",
-        content=answer,
-        citations=citations or None,
+    assistant = _commit_assistant(
+        db, conv, answer, citations=citations or None
     )
-    db.add(assistant)
-    touch(conv)
-    db.commit()
     logger.info(
         event_msg(
             "chat.ask_ok",
@@ -337,6 +452,208 @@ def _ask_rag(
         "citations": citations,
         "messageId": assistant.id,
     }
+
+
+def _ask_rag_stream(
+    db: Session,
+    user: User,
+    settings,
+    conv: Conversation,
+    question: str,
+    cancel: Callable[[], bool],
+) -> Iterator[dict[str, Any]]:
+    """RAG SSE 分支：stage retrieving → 拒答或 citations + LLM delta → done。
+
+    检索失败且未落库 → error；LLM 失败落库失败说明 → done。
+    取消 → cancelled，不落半成品。
+    """
+    t0 = time.perf_counter()
+    yield {
+        "event": "stage",
+        "data": {"stage": "retrieving", "message": "正在检索知识库…"},
+    }
+    if cancel():
+        yield {"event": "cancelled"}
+        return
+
+    try:
+        # 与 Session 同线程执行检索，避免 SQLAlchemy 跨线程
+        chunks, titles, citations = _retrieve_and_rank(db, settings, question)
+    except AppError as exc:
+        logger.warning(
+            event_msg(
+                "chat.ask_failed",
+                mode="rag",
+                user_id=user.id,
+                conversation_id=conv.id,
+                stage="retrieve",
+                err=exc.message,
+                stream=1,
+            )
+        )
+        code = (
+            ErrorCode.LLM_FAILED
+            if exc.code == ErrorCode.INGEST_FAILED
+            else exc.code
+        )
+        msg = exc.message
+        yield {"event": "error", "data": {"code": code, "message": msg}}
+        return
+
+    if cancel():
+        yield {"event": "cancelled"}
+        return
+
+    if not chunks:
+        yield {"event": "delta", "data": {"text": qa.REJECT_REPLY}}
+        assistant = _commit_assistant(
+            db, conv, qa.REJECT_REPLY, citations=None
+        )
+        logger.info(
+            event_msg(
+                "chat.ask_ok",
+                mode="rag",
+                user_id=user.id,
+                conversation_id=conv.id,
+                message_id=assistant.id,
+                rejected=True,
+                citations=0,
+                elapsed_ms=int((time.perf_counter() - t0) * 1000),
+                stream=1,
+            )
+        )
+        yield {
+            "event": "done",
+            "data": {
+                "conversationId": conv.id,
+                "messageId": assistant.id,
+                "answer": qa.REJECT_REPLY,
+                "rejected": True,
+                "citations": [],
+            },
+        }
+        return
+
+    yield {"event": "citations", "data": {"citations": citations}}
+    if cancel():
+        yield {"event": "cancelled"}
+        return
+
+    parts: list[str] = []
+    try:
+        for piece in qa.generate_answer_stream(
+            question=question, chunks=chunks, titles=titles
+        ):
+            if cancel():
+                yield {"event": "cancelled"}
+                return
+            parts.append(piece)
+            yield {"event": "delta", "data": {"text": piece}}
+    except AppError:
+        if cancel():
+            yield {"event": "cancelled"}
+            return
+        assistant = _commit_fail_assistant(db, conv)
+        logger.warning(
+            event_msg(
+                "chat.ask_failed",
+                mode="rag",
+                user_id=user.id,
+                conversation_id=conv.id,
+                stage="generate",
+                elapsed_ms=int((time.perf_counter() - t0) * 1000),
+                stream=1,
+            )
+        )
+        yield {
+            "event": "done",
+            "data": {
+                "conversationId": conv.id,
+                "messageId": assistant.id,
+                "answer": _FAIL_REPLY,
+                "rejected": False,
+                "citations": citations,
+            },
+        }
+        return
+
+    answer = "".join(parts).strip()
+    assistant = _commit_assistant(db, conv, answer, citations=citations or None)
+    logger.info(
+        event_msg(
+            "chat.ask_ok",
+            mode="rag",
+            user_id=user.id,
+            conversation_id=conv.id,
+            message_id=assistant.id,
+            rejected=False,
+            citations=len(citations),
+            elapsed_ms=int((time.perf_counter() - t0) * 1000),
+            stream=1,
+        )
+    )
+    yield {
+        "event": "done",
+        "data": {
+            "conversationId": conv.id,
+            "messageId": assistant.id,
+            "answer": answer,
+            "rejected": False,
+            "citations": citations,
+        },
+    }
+
+
+def _retrieve_and_rank(
+    db: Session, settings, question: str
+) -> tuple[list, dict[int, str], list[dict]]:
+    """retrieve + rerank + citations；供同步/流式共用。"""
+    fused_chunks = retrieve(question)
+    fused_doc_ids = {c.document_id for c in fused_chunks}
+    titles: dict[int, str] = {}
+    if fused_doc_ids:
+        docs = db.scalars(
+            select(Document).where(Document.id.in_(fused_doc_ids))
+        ).all()
+        titles = {d.id: d.title for d in docs}
+    ranked_chunks = rerank_chunks(
+        question,
+        fused_chunks,
+        top_n=settings.RAG_TOP_K,
+        titles=titles,
+    )
+    if not ranked_chunks:
+        return [], titles, []
+    doc_ids = {c.document_id for c in ranked_chunks}
+    titles = {i: titles[i] for i in doc_ids if i in titles}
+    citations = qa.build_citations(ranked_chunks, titles=titles)
+    return ranked_chunks, titles, citations
+
+
+def _commit_assistant(
+    db: Session,
+    conv: Conversation,
+    content: str,
+    *,
+    citations: list | None,
+) -> Message:
+    """写入 assistant 消息并 touch 会话；返回已 refresh 的行。"""
+    assistant = Message(
+        conversation_id=conv.id,
+        role="assistant",
+        content=content,
+        citations=citations,
+    )
+    db.add(assistant)
+    touch(conv)
+    db.commit()
+    db.refresh(assistant)
+    return assistant
+
+
+def _commit_fail_assistant(db: Session, conv: Conversation) -> Message:
+    """落库固定失败说明文案（与现网同步路径一致）。"""
+    return _commit_assistant(db, conv, _FAIL_REPLY, citations=None)
 
 
 def _get_owned_conversation(

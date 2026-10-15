@@ -48,7 +48,10 @@ const props = defineProps({
 const root = ref(null)
 
 watch(
-  () => props.messages.length,
+  () => [
+    props.messages.length,
+    props.messages.map((m) => (m.content || '').length).join(','),
+  ],
   async () => {
     await nextTick()
     if (root.value) {

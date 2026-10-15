@@ -27,7 +27,7 @@
 ```
 backend/app/
 ├── api/
-│   └── chat.py          # /api/chat、/api/conversations
+│   └── chat.py          # /api/chat、/api/chat/stream（见 chat-sse）、/api/conversations
 ├── services/
 │   ├── chat.py          # 检索 → 拒答/生成
 │   └── qa.py            # 组 prompt、调 LLM
@@ -72,7 +72,7 @@ frontend/
 | `RAG_RERANK_KEEP_TOP1_FLOOR` | Top1 兜底地板，默认 0.15 |
 | `RAG_REJECT_MAX_DISTANCE` / `RAG_RELATIVE_MAX_GAP` | 仅 `filter_relevant` 调试用；正式问答不用 |
 
-前端约定（可写 `.env.development`）：入库 Axios timeout **600000**；问答 **120000**。
+前端约定（可写 `.env.development`）：入库 Axios timeout **600000**；同步问答 **120000**；UI 问答主路径见 [chat-sse-design.md](../chat-sse-design.md)。
 
 ---
 
@@ -108,7 +108,8 @@ LLM 失败：保留已落 user 消息；`50010` 或写失败说明 assistant。
 
 | 模块 | 路径 | 说明 |
 |------|------|------|
-| 问答 | `POST /api/chat` | 懒建会话；返回答案 / rejected / citations / conversationId |
+| 问答 | `POST /api/chat` | 同步；懒建会话；返回答案 / rejected / citations / conversationId |
+| 问答流式 | `POST /api/chat/stream` | SSE；见 [chat-sse-design.md](../chat-sse-design.md) |
 | 会话 | `/api/conversations` | 列表、消息详情、删除；仅本人 |
 | 健康 / 认证 / 文档 | 沿用 Phase 1–3 | |
 
@@ -143,6 +144,7 @@ LLM 失败：保留已落 user 消息；`50010` 或写失败说明 assistant。
 ## 7. 本阶段不做
 
 - 问题改写 LLM、Router/Verification 多节点（BM25 + Rerank 已接入）
-- 异步 SSE、按钮级权限、私有文档库
+- ~~异步 SSE~~ → 对话 SSE 见 [chat-sse-design.md](../chat-sse-design.md)（非入库异步任务）
+- 按钮级权限、私有文档库
 
 主链路演示通过即本规格交付完成。完整拍板见 [主文档](../knowledge-qa-design.md)。

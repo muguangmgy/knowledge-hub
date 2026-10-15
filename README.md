@@ -4,12 +4,13 @@
 
 - **知识库问答（`mode=rag`）**：上传 PDF / docx / md / txt → 解析切分 → Embedding 入库 → 向量+BM25 混合检索（RRF）→ BGE Rerank → 依据不足拒答，否则一次 LLM 生成带引用答案。
 - **投研助手（`mode=direct`）**：一句话任务 → LangGraph 固定拓扑 Multi-Agent（Coordinator → 并行 Analyst → Writer → Mailer）→ Markdown 报告；可选 SMTP 发 PDF 附件。
+- **对话 SSE**：UI 主路径 `POST /api/chat/stream`（打字流 + 投研阶段进度 + 可停止）；同步 `POST /api/chat` 仍保留供脚本/兼容。
 
 ## 技术栈
 
 | 层 | 技术 |
 |----|------|
-| 前端 | Vue 3 + Vite + Pinia + Element Plus + Axios |
+| 前端 | Vue 3 + Vite + Pinia + Element Plus + Axios（短请求）+ `fetch` SSE（问答流） |
 | 后端 | FastAPI + SQLAlchemy + MySQL |
 | 向量 / 模型 | Chroma（本地）+ 内存 BM25 + SiliconFlow（Embedding / Rerank / Chat） |
 | 投研 | LangGraph + 腾讯行情/资讯 HTTP + 新浪 A 股代码表（可选 Redis 缓存）+ SMTP |
@@ -53,7 +54,7 @@ npm run dev
 ```
 
 浏览器打开：http://localhost:5173  
-开发时 `VITE_API_BASE` 留空，由 Vite 将 `/api` 代理到 `127.0.0.1:8000`。
+开发时 `VITE_API_BASE` 留空，由 Vite 将 `/api` 代理到 `127.0.0.1:8000`；其中 `/api/chat/stream` 单独配置（关缓冲、拉长超时）以支持 SSE。
 
 ### 3. 种子账号
 
@@ -69,26 +70,26 @@ npm run dev
 
 - 注册 / 登录（JWT Bearer）；业务接口验登录 + ACTIVE
 - 文档共享库：上传、列表、详情、物理删除
-- **知识库问答**（`/chat/rag`）：向量+BM25 → RRF → Rerank 分数门控 → 规则拒答或带 `citations` 生成；每轮独立，生成不带闲聊历史
-- **投研助手**（`/chat/direct`）：Multi-Agent 近 30 日行情报告；助手消息 Markdown 渲染；话术邮箱优先，否则 `RESEARCH_DEFAULT_EMAIL`；邮件为 PDF 附件（不含聊天投递说明）
-- 会话按 `mode` 隔离，禁止混聊
+- **知识库问答**（`/chat/rag`）：向量+BM25 → RRF → Rerank 分数门控 → 规则拒答或带 `citations` 生成；每轮独立，生成不带闲聊历史；SSE 打字流，引用先出
+- **投研助手**（`/chat/direct`）：Multi-Agent 近 30 日行情报告；SSE 阶段进度 + Writer 打字流；助手 Markdown 渲染；话术邮箱优先，否则 `RESEARCH_DEFAULT_EMAIL`；邮件为 PDF 附件（不含聊天投递说明；PDF 换行与网页 `breaks` 对齐）
+- 会话按 `mode` 隔离，禁止混聊；发送中可「停止」（取消不落半成品 assistant，投研不发信）
 
 ## 目录结构（摘要）
 
 ```
 knowledge-hub/
-├── .docs/                         # 主规格 + phase + 双模式 / 投研
+├── .docs/                         # 主规格 + phase + 双模式 / 投研 / SSE
 ├── .cursor/rules/                 # Cursor 约定
 ├── scripts/                       # 迁移 + verify_*.py（仓库根）
 ├── backend/
 │   ├── app/
 │   │   ├── main.py                # 入口、lifespan、CORS
-│   │   ├── api/                   # HTTP 路由（薄）
+│   │   ├── api/                   # HTTP 路由（薄）；含 /api/chat/stream
 │   │   ├── services/              # 业务（auth / ingest / chat / qa）
-│   │   ├── agent/                 # 投研：graph.py · state · agents/ · tools/
+│   │   ├── agent/                 # 投研：graph.py · stream.py · agents/ · tools/
 │   │   ├── auth/ · ingest/ · rag/ · llm/
 │   │   ├── models/ · schemas/
-│   │   └── common/                # config、db、errors、chroma、redis、logging
+│   │   └── common/                # config、db、errors、chroma、redis、sse、logging
 │   ├── scripts/                   # 部分 phase 回归脚本
 │   ├── data/kb/ · data/chroma/
 │   ├── .env.example
@@ -100,10 +101,15 @@ knowledge-hub/
     │   ├── api/ · stores/ · router/ · utils/
     │   ├── views/{auth,documents,chat}
     │   └── components/{chat,ingest}
-    └── vite.config.js
+    └── vite.config.js             # /api 与 /api/chat/stream 代理
 ```
 
-规格详见 `.docs/`（含 [投研 Multi-Agent](.docs/stock-research-agent-design.md)）。
+规格详见 `.docs/`：
+
+- [主规格](.docs/knowledge-qa-design.md)
+- [双模式外壳](.docs/chat-dual-mode-design.md)
+- [投研 Multi-Agent](.docs/stock-research-agent-design.md)
+- [对话 SSE](.docs/chat-sse-design.md)
 
 ## 常用配置（`backend/.env`）
 
@@ -112,7 +118,7 @@ knowledge-hub/
 | `DATABASE_URL` | MySQL 连接串 |
 | `JWT_SECRET_KEY` | JWT 签名密钥 |
 | `CORS_ORIGINS` | 默认 `http://localhost:5173` |
-| `LLM_*` | SiliconFlow 对话模型 |
+| `LLM_*` | SiliconFlow 对话模型（支持 `stream: true`） |
 | `EMBEDDING_*` | SiliconFlow 向量模型 |
 | `RAG_TOP_K` | 精排后最终给模型的片段条数，默认 8 |
 | `RAG_HYBRID_PATH_TOP_K` | 向量 / BM25 各路召回与 RRF 融合条数，默认 20 |
@@ -134,6 +140,9 @@ knowledge-hub/
 ```bash
 cd backend
 .\.venv\Scripts\python.exe ..\scripts\verify_phase1_4.py
+
+# 对话 SSE 冒烟（A6/A7/A8 + 流式 meta/done）
+.\.venv\Scripts\python.exe ..\scripts\verify_chat_sse.py --user admin --password 123456
 ```
 
 ## License

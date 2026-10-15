@@ -6,15 +6,15 @@ alwaysApply: false
 
 # Frontend（Vue 3）
 
-栈：Vue 3 + Vite + **JavaScript**（非 TS）+ Pinia + Element Plus + Axios。开发端口 **5173**；`VITE_API_BASE` 默认为空，靠 Vite 把 `/api` 代理到 `127.0.0.1:8000`。
+栈：Vue 3 + Vite + **JavaScript**（非 TS）+ Pinia + Element Plus + Axios（短请求）+ **`fetch` SSE**（问答流）。开发端口 **5173**；`VITE_API_BASE` 默认为空，靠 Vite 把 `/api` 代理到 `127.0.0.1:8000`。`vite.config.js` 中 **`/api/chat/stream` 单独代理**（关缓冲、拉长超时），须写在通用 `/api` 之前。
 
 ## 结构
 
-- `api/*`：纯 HTTP；`stores/*`：状态编排；`views` 薄；复用进 `components/`
+- `api/*`：纯 HTTP / SSE；`stores/*`：状态编排；`views` 薄；复用进 `components/`
 - 页面：`views/auth`（登录/注册）、`documents`、`chat`（`ChatView` rag / `DirectChatView` 投研）
 - 全局样式：仅 `assets/css/global.css`（`main.js` 引入；**不要**再建 `styles/`）
-- 助手 Markdown：`utils/markdown.js`（DOMPurify）；投研报告表格走安全 HTML
-- Token：`localStorage` 键 `kh_token`；经 `api/http.js` 读写
+- 助手 Markdown：`utils/markdown.js`（DOMPurify，`breaks: true`）；投研报告表格走安全 HTML
+- Token：`localStorage` 键 `kh_token`；经 `api/http.js` 读写；SSE 用 `fetch` 时自行带 `Authorization`
 
 ## 路由
 
@@ -22,23 +22,28 @@ alwaysApply: false
 - 需登录：`/chat/rag`（知识库问答）、`/chat/direct`（投研助手）、`/documents`；无 Token → `/login?redirect=...`
 - 默认 `/`、`/chat` → `/chat/rag`；两套会话 store 按 `mode` 隔离，禁止混聊
 
-## HTTP
+## HTTP / SSE
 
-- 一律走 `api/http.js`（Bearer、`code !== 0` 拒绝、401/`40101` 清 Token 跳登录）
+- 短请求一律走 `api/http.js`（Bearer、`code !== 0` 拒绝、401/`40101` 清 Token 跳登录）
+- **问答 UI 主路径**：`askChatStream`（`POST /api/chat/stream`）；**不要**用 Axios 扛长流，**不要**用原生 `EventSource`（难带 Bearer）
+- 同步 `askChat`（`POST /api/chat`）仅脚本/兼容；超时仍 `120000`
 - 字段 **camelCase**（`accessToken`、`conversationId`）
-- 超时：入库 `600000`；问答 / 投研 `120000`（后端图超时约 90s）；勿假装超时成功
+- 其它超时：入库 `600000`；勿假装超时成功
 
 ```js
-// ❌ BAD：页面裸 axios
+// ❌ BAD：页面裸 axios / UI 主路径仍用同步 askChat
 axios.post('/api/chat', body)
+await askChat({ message, conversationId, mode })
 
-// ✅ GOOD
-import { askChat } from '../api/chat'
-await askChat({ message, conversationId })
+// ✅ GOOD：UI 问答走 SSE
+import { askChatStream } from '../api/chat'
+await askChatStream({ message, conversationId, mode }, handlers, signal)
 ```
+
+SSE 约定（详见 `.docs/chat-sse-design.md`）：事件 `meta` / `stage` / `citations` / `delta` / `done` / `error`；`asking` 期间禁双飞；「停止」= Abort；取消后 UI 收回半成品 assistant。
 
 ## 交互
 
 - 登出：只清 Token（无后端 logout）
-- 「新对话」：只清本地 `conversationId` / messages
+- 「新对话」：只清本地 `conversationId` / messages（并 stop 进行中的流）
 - 错误提示用后端 `message`；避免空 catch

@@ -42,7 +42,7 @@ Knowledge Hub 当前对话入口固定走混合检索 → Rerank → 拒答 / �
 
 ### 2.2 非目标（本规格不做）
 
-- SSE / 流式输出
+- ~~SSE / 流式输出~~ → 已由 [chat-sse-design.md](./chat-sse-design.md) 交付（`POST /api/chat/stream`）；本规格仍只定义 mode 外壳
 - 按钮级权限拆分（如 `chat:free`）；仍只验已登录 + ACTIVE
 - 私有文档库 / 按文档 ACL 检索
 - `direct` 独立模型、独立 temperature 配置（共用现有 `LLM_*`）
@@ -55,7 +55,7 @@ Knowledge Hub 当前对话入口固定走混合检索 → Rerank → 拒答 / �
 
 ```mermaid
 flowchart TD
-  client[前端两套入口] --> postChat["POST /api/chat mode"]
+  client[前端两套入口] --> postChat["POST /api/chat 或 /stream"]
   postChat --> resolveConv[懒建或加载会话并校验 mode]
   resolveConv --> saveUser[落库 user 消息]
   saveUser --> branch{mode}
@@ -282,11 +282,11 @@ flowchart TD
 
 [`frontend/src/api/chat.js`](../frontend/src/api/chat.js)：
 
-- `askChat`：body 带 `mode`（缺失与 `null` 由后端视为 `rag`；新前端应显式传）
+- **UI 主路径** `askChatStream`（`POST /api/chat/stream`）：body 带 `mode`；见 [chat-sse-design.md](./chat-sse-design.md)
+- 同步 `askChat`（`POST /api/chat`）：保留脚本/兼容；timeout 120000
 - `listConversations`：`params: { mode }`（新前端显式传；不传时后端按 §5.2 只返回 `rag`）
-- timeout 等约定不变（问答 120000）
 
-两套 store 各自 `ask` / `loadConversations` 写入对应 mode。
+两套 store 各自 `ask`（走 SSE）/ `loadConversations` 写入对应 mode。
 
 ### 7.4 样式
 
@@ -304,7 +304,7 @@ flowchart TD
 | 旧「对话」菜单 | 改为「知识库问答」指向 `/chat/rag`；「投研助手」指向 `/chat/direct`；`/chat` → `/chat/rag` |
 | 回归脚本 | 若有 `scripts/verify_phase*` 覆盖 chat，实现阶段按需增加 `mode` 用例（非本文必须交付） |
 
-**旧前端现状**：[`listConversations`](../frontend/src/api/chat.js) 与 `askChat` **均不传** `mode`。在 §5.2「不传默认只返回 `rag`」下，旧前端列表不会混入 `direct` 会话，因而也不会误开 `direct` 再触发混聊 `40001`。若有人用手工构造的 `conversationId` 指向 `direct` 且不传 `mode`（按 `rag` 续聊），仍会因会话 mode 不一致被拒——属预期，无需为旧客户端绕过校验。新前端两套入口不得跨模式复用 `conversationId`。
+**现网前端**：两套入口显式传 `mode`；问答走 `askChatStream`。列表不传 `mode` 时后端仍只返回 `rag`（§5.2）。不得跨模式复用 `conversationId`。
 
 ---
 

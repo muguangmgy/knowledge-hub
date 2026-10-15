@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from datetime import date
 
 from app.agent.logging_util import check_deadline
-from app.llm.client import chat_completion
+from app.llm.client import chat_completion, chat_completion_stream
 
 TIMEOUT_MSG = "分析超时，请稍后重试。"
 NO_SYMBOL_MSG = "请说明股票名称或代码"
@@ -52,13 +53,32 @@ _SYSTEM_TEMPLATE = """你是股票投研报告撰写助手。根据给定 JSON �
 
 def writer_node(state: dict) -> dict:
     """综合三路数据写 Markdown；超时/无标的走硬编码；免责声明由系统追加。"""
+    hardcoded, messages, table_md = prepare_writer(state)
+    if hardcoded is not None:
+        body = hardcoded
+    else:
+        assert messages is not None
+        report = chat_completion(messages)
+        body = finalize_writer_body((report or "").strip(), table_md)
+    return {"report_md": append_disclaimer(body)}
+
+
+def prepare_writer(
+    state: dict,
+) -> tuple[str | None, list[dict[str, str]] | None, str]:
+    """解析 Writer 输入，供同步 writer_node 与流式 iter_writer_deltas 共用。
+
+    返回 ``(硬编码正文不含免责声明, LLM messages, table_md)``。
+    超时/无标的 → 硬编码非空、messages 为 None；
+    有标的 LLM 路径 → 硬编码为 None、messages 非空。
+    """
     patch = check_deadline(state)
     timed_out = bool(state.get("timed_out") or patch.get("timed_out"))
     if timed_out:
-        return {"timed_out": True, "report_md": TIMEOUT_MSG}
+        return TIMEOUT_MSG, None, ""
 
     if state.get("skip_analysts"):
-        return {"report_md": NO_SYMBOL_MSG}
+        return NO_SYMBOL_MSG, None, ""
 
     intent = state.get("intent") or {}
     quote = state.get("quote_data") if isinstance(state.get("quote_data"), dict) else {}
@@ -121,22 +141,59 @@ def writer_node(state: dict) -> dict:
         meta_extra=meta_extra,
         section_one=section_one,
     )
+    messages: list[dict[str, str]] = [
+        {"role": "system", "content": system},
+        {
+            "role": "user",
+            "content": json.dumps(payload, ensure_ascii=False, default=str),
+        },
+    ]
+    return None, messages, table_md
 
-    report = chat_completion(
-        [
-            {"role": "system", "content": system},
-            {
-                "role": "user",
-                "content": json.dumps(payload, ensure_ascii=False, default=str),
-            },
-        ]
-    )
-    body = (report or "").strip() or "数据不足，未能生成报告。"
-    if table_md and "## 一、核心数据概览" not in body:
-        body = _inject_core_table(body, table_md)
-    if "免责声明" not in body and "不构成" not in body:
-        body = body.rstrip() + DISCLAIMER
-    return {"report_md": body}
+
+def finalize_writer_body(body: str, table_md: str) -> str:
+    """模型正文后处理：空兜底、补核心表；不含免责声明。"""
+    text = (body or "").strip() or "数据不足，未能生成报告。"
+    if table_md and "## 一、核心数据概览" not in text:
+        text = _inject_core_table(text, table_md)
+    return text
+
+
+def append_disclaimer(body: str) -> str:
+    """追加免责声明（若尚无）。"""
+    text = (body or "").rstrip()
+    if "免责声明" not in text and "不构成" not in text:
+        text = text + DISCLAIMER
+    return text
+
+
+def iter_writer_deltas(state: dict) -> Iterator[str]:
+    """流式产出 Writer 正文增量（不含免责声明）。
+
+    硬编码路径一次 yield 全文；LLM 路径逐 token yield，
+    末尾若需补核心表则再 yield 后缀差分。
+    """
+    hardcoded, messages, table_md = prepare_writer(state)
+    if hardcoded is not None:
+        yield hardcoded
+        return
+
+    assert messages is not None
+    parts: list[str] = []
+    for chunk in chat_completion_stream(messages):
+        parts.append(chunk)
+        yield chunk
+    # 若模型漏表，在流末追加一次补表差分（整段 finalize 相对已流内容的后缀）
+    raw = "".join(parts)
+    finalized = finalize_writer_body(raw, table_md)
+    if finalized.startswith(raw):
+        suffix = finalized[len(raw) :]
+        if suffix:
+            yield suffix
+    elif finalized != raw:
+        # 罕见：注入改了前缀；再推一版纠偏全文由 done.answer 覆盖，此处尽量补后缀
+        if len(finalized) > len(raw):
+            yield finalized[len(raw) :]
 
 
 def _inject_core_table(body: str, table_md: str) -> str:

@@ -116,11 +116,11 @@ uv pip install -r requirements.txt
 | `RAG_RELATIVE_MAX_GAP` | 与 Top1 距离差（同上，调试用） |
 | `REDIS_URL` | 可选；投研 A 股代码表缓存；空则跳过 |
 | `SMTP_*` / `RESEARCH_DEFAULT_EMAIL` / `RESEARCH_GRAPH_TIMEOUT_SEC` | 投研发信与图超时（默认 90s）；见投研设计文档 |
-| （前端约定，非必须进 `.env`） | 入库 Axios `timeout` 建议 **600000**（10 分钟）；问答/投研建议 **120000**（2 分钟） |
+| （前端约定，非必须进 `.env`） | 入库 Axios `timeout` 建议 **600000**（10 分钟）；同步问答/投研 `askChat` 建议 **120000**；UI 主路径为 SSE（`askChatStream`，见 [chat-sse-design.md](./chat-sse-design.md)） |
 
 前后端：Vite **5173** / FastAPI **8000**。CORS：`allow_origins` 读配置；`allow_headers` 含 `Authorization`；Token 在 **localStorage**（非 Cookie），`allow_credentials` 可 false。
 
-**同步长请求**：入库（解析 + Embedding）与问答均在**单次 HTTP** 内完成。超时与前端等待见 §7.4。
+**同步长请求**：入库（解析 + Embedding）在**单次 HTTP** 内完成。问答 UI 主路径为 SSE（`POST /api/chat/stream`，见 [chat-sse-design.md](./chat-sse-design.md)）；同步 `POST /api/chat` 仍保留供脚本/兼容。超时与前端等待见 §7.4。
 
 ### 2.3 仓库与工程目录结构
 
@@ -169,14 +169,15 @@ knowledge-hub/
 │       ├── api/                 # HTTP 路由层（薄）
 │       │   ├── auth.py          # register / login / me
 │       │   ├── documents.py
-│       │   └── chat.py          # /api/chat、/api/conversations
+│       │   └── chat.py          # /api/chat、/api/chat/stream、/api/conversations
 │       ├── services/            # 业务层
 │       │   ├── auth.py
 │       │   ├── ingest.py        # 入库/列表/删除
 │       │   ├── chat.py          # rag 检索生成 / direct → agent
 │       │   └── qa.py            # rag 组 prompt、调 LLM
 │       ├── agent/               # 投研 Multi-Agent（mode=direct）；拓扑见 graph.py
-│       │   ├── graph.py         # 固定拓扑 + 外层超时（勿再建顶层 app/graph/）
+│       │   ├── graph.py         # 同步固定拓扑 + 外层超时（勿再建顶层 app/graph/）
+│       │   ├── stream.py        # SSE 增量执行（stage + Writer 流）；见 chat-sse
 │       │   ├── state.py
 │       │   ├── logging_util.py  # 图内 deadline 辅助
 │       │   ├── agents/          # coordinator / quote|market|news / writer / mailer
@@ -570,15 +571,16 @@ lifespan：
 - 单 worker（长入库期间其它请求会排队）
 - 禁用用户：依赖层查库拦截
 
-### 7.4 同步长请求：超时与前端等待
+### 7.4 长请求：超时与前端等待
 
 浏览器或网关默认超时（常见 60s）会先于业务失败切断连接，须**显式加长**并约定 UI。
 
 | 环节 | 约定 |
 |------|------|
 | 入库 HTTP | 前端对该接口单独 `timeout = 600000`（10 分钟）；其它短接口可用默认（如 30s） |
-| 问答 HTTP | 前端对该接口 `timeout = 120000`（2 分钟） |
-| 本地网关 | 直连 Vite→FastAPI 即可；若加 Nginx 等，`proxy_read_timeout` / `proxy_send_timeout` **≥ 入库超时**（建议 ≥ 600s） |
+| 问答 UI | **SSE** `POST /api/chat/stream`（见 [chat-sse-design.md](./chat-sse-design.md)）；Vite 对 `/api/chat/stream` 单独代理（关缓冲）；连接等待建议 ≥ 120s |
+| 问答同步 | `POST /api/chat` 仍可供脚本；Axios `timeout = 120000`（2 分钟） |
+| 本地网关 | 直连 Vite→FastAPI 即可；若加 Nginx 等，入库 `proxy_read_timeout` **≥ 600s**；SSE 须 `proxy_buffering off` / `X-Accel-Buffering: no`，读超时 ≥ 120s |
 | 后端 | Uvicorn/FastAPI **不**另设更短的请求硬杀；入库 Embedding 失败走 `50001` / 回滚，问答 LLM/Embedding 失败走 `50010`；勿依赖网关超时当业务失败 |
 
 **前端等待（入库）**：
@@ -587,6 +589,11 @@ lifespan：
 - 成功：提示并刷新文档列表
 - 超时或网络错误：提示失败并可重试；不要假装已成功（未成功则库中无该文档，同名一般仍可再传）
 - 用户刷新/离开：无法取消已在跑的后端任务；若请求最终失败则无库行
+
+**前端等待（问答 SSE）**：
+
+- 发送中可展示 `stage` 文案；支持「停止」（Abort）；取消不落半成品 assistant
+- `done` 到达后用服务端 `answer` 覆盖本地拼接；引用在打字前经 `citations` 事件出现
 
 **演示建议**：优先用中小文档验证主链路；接近 `INGEST_MAX_MB` 的大 PDF 允许等待数分钟，属预期而非缺陷。
 
@@ -614,7 +621,8 @@ lifespan：
 | 认证 | `/api/auth` | `POST /register`、`POST /login`、`GET /me`（roles + permissions） |
 | 文档 | `/api/documents` | 上传、列表、详情、**物理删除**（先 Chroma）；共享库：任意已登录用户可操作全库 |
 | 会话 | `/api/conversations` | 列表 / 消息详情 / 删除；仅本人 |
-| 问答 | `/api/chat` | `conversationId` / `mode` 可选（缺省 `rag`）；缺省则懒建会话并返回 id；已有则校验归属与 mode；rag 检索范围 = 全库；direct 见 [stock-research](./stock-research-agent-design.md) |
+| 问答 | `/api/chat` | 同步整包；`conversationId` / `mode` 可选（缺省 `rag`）；缺省则懒建会话并返回 id；已有则校验归属与 mode；rag 检索范围 = 全库；direct 见 [stock-research](./stock-research-agent-design.md) |
+| 问答流式 | `/api/chat/stream` | SSE；请求体同 `/api/chat`；事件协议见 [chat-sse](./chat-sse-design.md)；UI 主路径 |
 | 健康 | `/api/health` | MySQL + Chroma |
 
 统一响应：`{ "code": 0, "message": "success", "data": {} }`
@@ -667,7 +675,7 @@ lifespan：
 - [ ] 会话归属；citations 只存 snippet
 - [ ] 会话由 `/api/chat` 懒建；首条后响应带回 `conversationId`
 - [ ] 文档为全员共享库；会话仍仅本人
-- [ ] 同步长请求：入库 10min / 问答 2min timeout；前端 loading 与超时文案
+- [ ] 长请求：入库 10min；问答 UI 走 SSE（可停止）；同步 `/api/chat` 仍可用；前端 loading / stage 与超时文案
 - [ ] Chroma `hnsw:space=cosine`；精排分数门控（软地板 + 相对落差 + Top1 兜底），滤完为空则拒
 
 **批准人：**  
@@ -682,7 +690,7 @@ lifespan：
 | 用户/权限 | 注册+登录+JWT；RBAC 五表；lifespan 幂等种子（角色/权限 + 用户 `admin`/`123456` 绑 admin）；注册绑 `user`；API 只验登录；登出前端删 Token |
 | 入库 | 先解析/Embedding，成功后再写库/落盘；Chroma 最后写；失败回滚；同名→40901；无正文→50001；无 PROCESSING / 无僵尸清理 |
 | 解析/切分 | 字符窗 max≈800 / overlap≈100；有标题用 heading；无标题段落滑窗；仅 pdf/docx/md/txt |
-| 同步超时 | 入库 Axios 600s、问答 120s；前端长等待文案；网关超时对齐 |
+| 长请求超时 | 入库 Axios 600s；问答 SSE + 同步 120s；Vite/Nginx SSE 去缓冲；前端长等待 / stage 文案 |
 | 文档库 | 全员共享；`document` 无 `user_id`、无 `status`；任意登录用户可列表/删/被检索 |
 | 删除 | 先 Chroma（失败整单失败）再 MySQL / 文件 |
 | 问答 | 混合检索 → Rerank 分数门控 → 规则拒答/一次生成；检索全库 |

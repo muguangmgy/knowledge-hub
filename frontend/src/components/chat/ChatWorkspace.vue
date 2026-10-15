@@ -18,7 +18,6 @@
         >
           <div class="conv-body">
             <div class="title">{{ c.title || `会话 #${c.id}` }}</div>
-            <div class="time">{{ c.updatedAt || c.createdAt }}</div>
           </div>
           <el-dropdown
             trigger="click"
@@ -60,9 +59,11 @@
         </template>
       </MessageList>
       <ChatInput
-        :disabled="store.asking"
+        :asking="store.asking"
+        :stage-message="store.stageMessage || ''"
         :placeholder="inputPlaceholder"
         @send="onSend"
+        @stop="onStop"
       />
     </section>
   </div>
@@ -175,13 +176,18 @@ async function onDelete(c) {
   }
 }
 
-/** 发送问题（走 props.store.ask，带固定 mode）。 */
+/** 发送问题（走 props.store.ask SSE，带固定 mode）。 */
 async function onSend(text) {
   try {
     await props.store.ask(text)
   } catch (err) {
     ElMessage.error(err?.message || '问答失败')
   }
+}
+
+/** 停止当前 SSE 问答（AbortController）；半成品气泡由 store 收回。 */
+function onStop() {
+  props.store.stopAsking?.()
 }
 
 onMounted(refreshList)
@@ -268,15 +274,6 @@ onMounted(refreshList)
   text-overflow: ellipsis;
   color: var(--text);
   line-height: 1.35;
-}
-
-.conv .time {
-  font-size: 11px;
-  color: var(--muted);
-  margin-top: 3px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .more-btn {

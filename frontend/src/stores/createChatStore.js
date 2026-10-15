@@ -1,6 +1,9 @@
 /** 按 mode 生成对话 Pinia store 配置（rag / direct 各一份，状态隔离）。 */
 import * as chatApi from '../api/chat'
 
+/** AbortController 不进 Pinia state，避免被 Proxy 包裹。 */
+const abortByMode = new Map()
+
 /**
  * @param {'rag' | 'direct'} mode 固定写入本 store 的问答与列表过滤模式
  * @returns {object} Pinia defineStore 用的 options（state + actions）
@@ -12,13 +15,16 @@ export function createChatStoreOptions(mode) {
       messages: [],
       conversations: [],
       asking: false,
+      stageMessage: '',
       mode,
     }),
     actions: {
       /** 新对话：只清本地状态，不调删除接口。 */
       newChat() {
+        this.stopAsking()
         this.conversationId = null
         this.messages = []
+        this.stageMessage = ''
       },
       /** 刷新本 mode 下的会话列表。 */
       async refreshConversations() {
@@ -30,6 +36,7 @@ export function createChatStoreOptions(mode) {
        * @param {number} id
        */
       async openConversation(id) {
+        this.stopAsking()
         const res = await chatApi.getConversation(id)
         const conv = res.data.conversation
         if (conv.mode !== mode) {
@@ -39,6 +46,7 @@ export function createChatStoreOptions(mode) {
         }
         this.conversationId = conv.id
         this.messages = res.data.messages || []
+        this.stageMessage = ''
       },
       /** 重命名会话标题后刷新列表。 */
       async renameConversation(id, title) {
@@ -53,37 +61,131 @@ export function createChatStoreOptions(mode) {
           this.newChat()
         }
       },
+      /** 停止当前流式问答（Abort）；不落半成品由后端保证。 */
+      stopAsking() {
+        const ac = abortByMode.get(mode)
+        if (ac) {
+          ac.abort()
+          abortByMode.delete(mode)
+        }
+      },
       /**
-       * 提问：乐观插入 user，再追加 assistant；请求体始终带本 store 的 mode。
+       * 提问（SSE 主路径）：乐观插入 user + 空 assistant；
+       * 处理 meta/stage/citations/delta/done/error；done 用服务端 answer 纠偏。
+       * asking 期间直接 return（禁双飞）；Abort/取消则收回 assistant 气泡。
        * @param {string} text
        */
       async ask(text) {
+        if (this.asking) return
         this.asking = true
+        this.stageMessage = ''
         this.messages.push({ role: 'user', content: text, citations: null })
+        const assistantIdx = this.messages.length
+        this.messages.push({
+          role: 'assistant',
+          content: '',
+          citations: [],
+          rejected: false,
+          streaming: true,
+        })
+
+        const ac = new AbortController()
+        abortByMode.set(mode, ac)
+        let gotDone = false
+        let cancelled = false
+
         try {
-          const res = await chatApi.askChat({
-            message: text,
-            conversationId: this.conversationId,
-            mode,
-          })
-          this.conversationId = res.data.conversationId
-          this.messages.push({
-            role: 'assistant',
-            content: res.data.answer,
-            citations: res.data.citations || [],
-            rejected: res.data.rejected,
-          })
-          await this.refreshConversations()
+          await chatApi.askChatStream(
+            {
+              message: text,
+              conversationId: this.conversationId,
+              mode,
+            },
+            {
+              onMeta: (data) => {
+                if (data.conversationId != null) {
+                  this.conversationId = data.conversationId
+                }
+              },
+              onStage: (data) => {
+                this.stageMessage = data.message || data.stage || ''
+              },
+              onCitations: (data) => {
+                const m = this.messages[assistantIdx]
+                if (m) m.citations = data.citations || []
+              },
+              onDelta: (data) => {
+                const m = this.messages[assistantIdx]
+                if (m) m.content = (m.content || '') + (data.text || '')
+              },
+              onDone: (data) => {
+                gotDone = true
+                this.conversationId = data.conversationId ?? this.conversationId
+                const m = this.messages[assistantIdx]
+                if (m) {
+                  m.content = data.answer ?? m.content
+                  m.citations = data.citations || []
+                  m.rejected = !!data.rejected
+                  m.id = data.messageId
+                  m.streaming = false
+                }
+                this.stageMessage = ''
+              },
+              onError: (data) => {
+                const m = this.messages[assistantIdx]
+                if (m) {
+                  m.content = data.message || '问答失败，请稍后重试'
+                  m.citations = []
+                  m.rejected = false
+                  m.streaming = false
+                }
+                this.stageMessage = ''
+              },
+            },
+            ac.signal,
+          )
+
+          if (!gotDone && ac.signal.aborted) {
+            cancelled = true
+          } else if (!gotDone) {
+            const m = this.messages[assistantIdx]
+            if (m && !(m.content || '').trim()) {
+              this.messages.splice(assistantIdx, 1)
+            } else if (m) {
+              m.streaming = false
+            }
+          }
         } catch (err) {
-          this.messages.push({
-            role: 'assistant',
-            content: err?.message || '问答失败，请稍后重试',
-            citations: [],
-            rejected: false,
-          })
-          throw err
+          if (err?.name === 'AbortError' || ac.signal.aborted) {
+            cancelled = true
+          } else {
+            const m = this.messages[assistantIdx]
+            if (m && m.streaming) {
+              m.content = err?.message || '问答失败，请稍后重试'
+              m.citations = []
+              m.streaming = false
+            }
+            throw err
+          }
         } finally {
+          if (cancelled) {
+            if (
+              this.messages[assistantIdx] &&
+              this.messages[assistantIdx].role === 'assistant'
+            ) {
+              this.messages.splice(assistantIdx, 1)
+            }
+            this.stageMessage = ''
+          }
+          if (abortByMode.get(mode) === ac) {
+            abortByMode.delete(mode)
+          }
           this.asking = false
+          try {
+            await this.refreshConversations()
+          } catch {
+            /* ignore */
+          }
         }
       },
     },

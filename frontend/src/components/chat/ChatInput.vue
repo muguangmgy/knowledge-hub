@@ -1,20 +1,29 @@
 <template>
   <div class="chat-input">
+    <div v-if="stageMessage" class="stage-hint">{{ stageMessage }}</div>
     <div class="composer">
       <el-input
         v-model="text"
         type="textarea"
         :rows="2"
         :autosize="{ minRows: 2, maxRows: 6 }"
-        :disabled="disabled"
+        :disabled="asking"
         :placeholder="placeholder"
         resize="none"
         @keydown.enter.exact.prevent="onSend"
       />
       <el-button
+        v-if="asking"
+        type="danger"
+        plain
+        @click="emit('stop')"
+      >
+        停止
+      </el-button>
+      <el-button
+        v-else
         type="primary"
-        :loading="disabled"
-        :disabled="disabled || !text.trim()"
+        :disabled="!text.trim()"
         @click="onSend"
       >
         发送
@@ -24,13 +33,17 @@
 </template>
 
 <script setup>
-/** 输入框：Enter 发送，Shift+Enter 换行。 */
+/** 输入框：Enter 发送；asking 时展示停止与 stage 文案。 */
 import { ref } from 'vue'
 
 defineProps({
-  disabled: {
+  asking: {
     type: Boolean,
     default: false,
+  },
+  stageMessage: {
+    type: String,
+    default: '',
   },
   placeholder: {
     type: String,
@@ -38,7 +51,7 @@ defineProps({
   },
 })
 
-const emit = defineEmits(['send'])
+const emit = defineEmits(['send', 'stop'])
 const text = ref('')
 
 /** 发送当前输入并清空。 */
@@ -54,6 +67,14 @@ function onSend() {
 .chat-input {
   padding: 12px 24px 20px;
   background: linear-gradient(to top, var(--bg-subtle) 70%, transparent);
+}
+
+.stage-hint {
+  max-width: 860px;
+  margin: 0 auto 8px;
+  padding: 0 4px;
+  font-size: 12px;
+  color: var(--muted);
 }
 
 .composer {

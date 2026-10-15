@@ -13,10 +13,11 @@ alwaysApply: false
 
 ## 分层
 
-- `app/api/`：HTTP 路由，只做参数绑定 / Depends / 调 `services` / `ok()`
+- `app/api/`：HTTP 路由，只做参数绑定 / Depends / 调 `services` / `ok()`（流式则 `StreamingResponse`）
 - `app/services/`：业务与事务；抛 `AppError`
-- 支撑模块：`auth/`（deps/security/seed）、`ingest/`（parser/chunker）、`rag/`、`llm/`、`agent/`（投研 LangGraph）
+- 支撑模块：`auth/`（deps/security/seed）、`ingest/`（parser/chunker）、`rag/`、`llm/`、`agent/`（投研 LangGraph + `stream.py`）
 - 外部 IO（Embedding / LLM / Chroma / 行情 HTTP / SMTP）勿堆进 api；投研工具放 `app/agent/tools/`
+- SSE 帧格式用 `app.common.sse`（`format_sse` / `format_sse_ping`）
 
 ```python
 # ❌ BAD：api 里写业务
@@ -31,14 +32,26 @@ from app.services import chat as chat_service
 @router.post("/api/chat")
 def chat(...):
     return ok(chat_service.ask(db, user, ...))
-```
 
+# ✅ GOOD：流式（UI 主路径）；建流前校验抛 AppError；流内用独立 Session
+@router.post("/api/chat/stream")
+async def chat_stream(...):
+    chat_service.validate_ask_preflight(...)
+    return StreamingResponse(..., media_type="text/event-stream")
+```
 
 ## 响应与错误
 
-- 成功：`{"code": 0, "message": "success", "data": ...}`（用 `ok()`）
-- 失败：抛 `AppError(ErrorCode.*, message, http_status)`；勿手写散乱 JSON
+- 成功（同步）：`{"code": 0, "message": "success", "data": ...}`（用 `ok()`）
+- 流式成功：SSE 事件 `meta` / `stage` / `citations` / `delta` / `done` / `error`（**不用**整包 `ok()` 信封）；协议见 `.docs/chat-sse-design.md`
+- 失败：抛 `AppError(ErrorCode.*, message, http_status)`；勿手写散乱 JSON；建流前失败仍走 AppError
 - 业务 code ≠ HTTP status；沿用已有码（`40101`/`40401`/`40901`/`50001`/`50010` 等），勿擅自发明
+
+## 对话双路径
+
+- `ask` / `POST /api/chat`：同步整包，行为勿随意改
+- `ask_stream` / `POST /api/chat/stream`：须与同步共享会话校验、citations/拒答常量、失败文案
+- 投研同步：`run_research_graph`；投研流式：`agent.stream.iter_research_stream`（禁止整图阻塞假流式）
 
 ## 配置与启动
 
