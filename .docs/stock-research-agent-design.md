@@ -1,7 +1,7 @@
 # Knowledge Hub — 股票投研 Multi-Agent 技术方案设计文档
 
 - **日期**：2026-10-14
-- **状态**：已实现（待验收）
+- **状态**：已实现
 - **作者**：项目组
 - **功能短名**：`stock-research-agent`
 - **对应主文档**：[knowledge-qa-design.md](./knowledge-qa-design.md)
@@ -39,7 +39,7 @@
 | 后端 | `backend/app/agent/`（state、graph、agents、tools） |
 | 对话 | `_ask_direct` → `run_research_graph`；停用闲聊补全 |
 | 配置 | `SMTP_*`、`RESEARCH_DEFAULT_EMAIL`、`REDIS_URL`（可选）；`langgraph`、`requests`、`redis`、`markdown` |
-| 前端 | `/chat/direct`；空态文案；助手 Markdown 渲染；UI 走 SSE（阶段 + Writer 流）；顶栏「投研助手」 |
+| 前端 | `/chat/direct`；空态文案；助手 Markdown 渲染；UI 走 SSE（阶段 + Writer 流）；侧栏「投研助手」（`sys_menu`） |
 
 ### 2.2 非目标
 
@@ -48,7 +48,7 @@
 - ~~SSE~~ → 传输层流式见 [chat-sse-design.md](./chat-sse-design.md)；本规格业务闸门（超时/发信）不变
 - 独立模型/temperature、发信权限拆分、限流/队列
 - 不保证强杀卡住的上游 HTTP；只保证超时**不发信**且 HTTP 尽快返回
-- MVP **不**做按 `tasks` 动态裁剪 Analyst（三路固定并行：quote / market / news）
+- MVP **不**做按 `tasks` 动态裁剪 Analyst（四路固定并行：quote / market / news / finance）
 - MVP Analyst **只拉数**，不在 Analyst 内调 LLM（解读留给 Writer）
 
 ---
@@ -62,7 +62,8 @@
 | **CoordinatorAgent** | 解析意图/`want_email`；代码校验；设 `skip_analysts` | 规则优先 + LLM 兜底 | `symbol` |
 | **QuoteAnalystAgent** | 腾讯基础字段 → `quote_data`（核心概览表） | 否 | `tencent` quote |
 | **MarketAnalystAgent** | 腾讯日 K → `market_data`（走势） | 否 | `tencent` kline |
-| **NewsAnalystAgent** | 腾讯个股资讯 → `news` | 否 | `tencent` news |
+| **NewsAnalystAgent** | 腾讯个股资讯 → `news`（**最多 6 条**） | 否 | `tencent` news |
+| **FinanceAnalystAgent** | AKShare 最近 4 期关键财务指标 → `finance_data` | 否 | `akshare` / 东财 |
 | **WriterAgent** | 产出 `report_md`（含硬编码分支） | 仅有标的且未超时 | 无 |
 | **MailerAgent** | 发信闸门 + SMTP；文末追加发送状态 | 否 | SMTP |
 
@@ -81,9 +82,11 @@ flowchart TD
   fanOut --> quote[QuoteAnalystAgent]
   fanOut --> market[MarketAnalystAgent]
   fanOut --> news[NewsAnalystAgent]
+  fanOut --> finance[FinanceAnalystAgent]
   quote --> writer
   market --> writer
   news --> writer
+  finance --> writer
   writer --> mailer[MailerAgent]
   mailer --> saveAsst[落库 assistant]
   saveAsst --> resp["answer=report_md"]
@@ -110,10 +113,12 @@ backend/app/agent/          # 勿再建顶层 app/graph/；拓扑即本包内 gr
 │   ├── quote_analyst.py
 │   ├── market_analyst.py
 │   ├── news_analyst.py
+│   ├── finance_analyst.py
 │   ├── writer.py
 │   └── mailer.py
 └── tools/
     ├── tencent.py     # 腾讯直连：quote / kline / news
+    ├── finance.py     # AKShare 财务指标（东财）
     ├── symbol.py      # 新浪 A 股代码表；可选 Redis 缓存
     ├── email.py       # SMTP；PDF 附件
     └── report_pdf.py  # Markdown → HTML → PyMuPDF Story PDF
@@ -160,7 +165,7 @@ def run_research_graph(user_input: str) -> dict:
 | `intent` | 标的、`want_email` 等 |
 | `skip_analysts` | 仅「无有效标的」；有标的但拉数失败仍为 `false` |
 | `deadline_ts` | 截止 Unix 时间 |
-| `quote_data` / `market_data` / `news` | 三路 Analyst 各写各字段；失败为空（互不覆盖，无需特殊 reducer） |
+| `quote_data` / `market_data` / `news` / `finance_data` | 各路 Analyst 各写各字段；失败为空（互不覆盖，无需特殊 reducer） |
 | `report_md` | 最终正文（Mailer 会追加文末） |
 | `errors` | 非致命错误；**并行 Analyst 可能同时 append**，须用可合并类型（如 `Annotated[list, operator.add]`），禁止默认覆盖导致丢一侧错误 |
 | `timed_out` | true 则禁止发信 |
@@ -171,7 +176,7 @@ def run_research_graph(user_input: str) -> dict:
 | 情况 | `skip_analysts` | Analysts | Writer | 发信* |
 |------|-----------------|----------|--------|-------|
 | 无标的 | `true` | 不跑 | 硬编码提示 | 不发 |
-| 有标的、三路失败 | `false` | 写 `errors` | LLM「数据不足」 | 仍发 |
+| 有标的、多路 Analyst 失败 | `false` | 写 `errors` | LLM「数据不足」 | 仍发 |
 | 有标的、部分成功 | `false` | 部分有数据 | LLM 降级报告 | 按 §5.3 |
 | 超时 | — | 跳过实际工作 | **一律**硬编码超时文案（不调 LLM；**即使**已有 `market_data`/`news` 也不出半成品报告） | 不发 |
 
@@ -184,18 +189,18 @@ def run_research_graph(user_input: str) -> dict:
 - 结构化抽取标的、`want_email`；窗口 30 自然日。
 - 解析失败 → WARNING，当无标的，不抛 `50010`。
 - 经 `tools/symbol` **校验/补全**代码（不信 LLM 裸代码）；失败 → `skip_analysts=true`。
-- 有标的：`skip_analysts=false`，固定调度三路 Analyst（不读动态 task 列表）。
+- 有标的：`skip_analysts=false`，固定调度四路 Analyst（不读动态 task 列表）。
 
-**QuoteAnalystAgent / MarketAnalystAgent / NewsAnalystAgent**
+**QuoteAnalystAgent / MarketAnalystAgent / NewsAnalystAgent / FinanceAnalystAgent**
 
-- 入口查超时；腾讯行情/资讯 HTTP 直连；**内部吞异常**只写 `errors`。
-- MVP 不调 LLM；只写 `quote_data` / `market_data` / `news`。
+- 入口查超时；行情/资讯走腾讯 HTTP，财务走 AKShare（东财）；**内部吞异常**只写 `errors`。
+- MVP 不调 LLM；只写 `quote_data` / `market_data` / `news` / `finance_data`（资讯最多 6 条；财务最近 4 期）。
 
 **WriterAgent**
 
 1. `timed_out` → **一律**写入硬编码「分析超时，请稍后重试」（**不调 LLM**；**覆盖**任何既有 `report_md`）。**拍板**：即使 Analyst 已有行情/资讯，也不出半成品研报。当前拓扑下 Writer 是 `report_md` 的唯一生产者，超时前不会已有正文；不做「非空则保留」分支（避免死条件）。  
 2. 无标的 / `skip_analysts` → 硬编码「请说明股票名称或代码」  
-3. 有标的且未超时 → LLM 综合数据写 Markdown（核心表由系统注入；免责声明由系统追加）
+3. 有标的且未超时 → LLM 综合数据写 Markdown（核心表、「三、资讯要点」「四、财务要点」由系统注入：资讯最多 6 条且标题为链接；财务为最近 4 期营收/归母净利/同比/ROE/毛利率表；免责声明由系统追加）
 
 **MailerAgent**
 
@@ -232,7 +237,7 @@ def run_research_graph(user_input: str) -> dict:
 | 相对原 direct | 本规格 |
 |---------------|--------|
 | 单 LLM + 6 条历史 | Multi-Agent；无历史 |
-| 无工具 | 腾讯 HTTP + 新浪代码表 + SMTP |
+| 无工具 | 腾讯 HTTP + AKShare 财务 + 新浪代码表 + SMTP |
 | `rejected`/`citations` | 仍为 `false` / `[]` |
 
 混聊 `40001` 不变。列表/路由仍 `mode=direct`、`/chat/direct`。
@@ -257,7 +262,7 @@ RESEARCH_GRAPH_TIMEOUT_SEC=90
 
 ### 7.2 依赖
 
-- `langgraph`、`requests`、`redis`、`markdown`；PDF 复用已有 `pymupdf`；tools 防御性取值 + Agent 外层 try/except。
+- `langgraph`、`requests`、`akshare`、`redis`、`markdown`；PDF 复用已有 `pymupdf`；tools 防御性取值 + Agent 外层 try/except。
 
 ### 7.3 超时（拍板）
 
@@ -309,7 +314,7 @@ Mailer 生成 PDF 时 Markdown 须启用 `nl2br`（与前端 `marked` `breaks: t
 |----|------|
 | 路由/Store | `/chat/direct`、`mode=direct` |
 | 空态 | 「分析贵州茅台近日行情发到我邮箱」 |
-| 顶栏 | 「投研助手」 |
+| 导航 | 侧栏「投研助手」（见 [rbac-menu-design.md](./rbac-menu-design.md)）；不再用顶栏业务链接 |
 | 渲染 | 助手消息 Markdown 安全渲染（表格/标题）；`breaks: true` |
 | 传输 | UI 走 `askChatStream`；展示 `stage`；可停止 |
 | 等待 | 连接建议 ≥ 120s（与图超时对齐） |
@@ -345,4 +350,4 @@ Mailer 生成 PDF 时 Markdown 须启用 `nl2br`（与前端 `marked` `breaks: t
 | A5 | `mode=rag` | 与改造前一致 |
 | A6 | SMTP 失败 | 有报告；标明失败 |
 | A7 | >90s（含 Analyst 已拉到部分数据后超时） | HTTP/聊天为超时文案（非半成品研报）；**不发信** |
-| A8 | 三路 Analyst 失败 + 要发 + 默认可用 | 「数据不足」；仍发信 |
+| A8 | 多路 Analyst 失败 + 要发 + 默认可用 | 「数据不足」；仍发信 |

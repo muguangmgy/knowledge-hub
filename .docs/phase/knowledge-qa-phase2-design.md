@@ -1,23 +1,23 @@
 # Knowledge Hub — Phase 2 设计文档（认证与 JWT）
 
 - **日期**：2026-10-12
-- **状态**：已完成
-
+- **状态**：已完成（历史阶段文档）
 - **对应主文档**：[../knowledge-qa-design.md](../knowledge-qa-design.md)
 - **依赖**：[Phase 1](./knowledge-qa-phase1-design.md)（表结构 + 种子 `admin` 已落库）
 - **下一阶段**：[knowledge-qa-phase3-design.md](./knowledge-qa-phase3-design.md)
+- **现网说明**：鉴权验 `status=1`；`/me` 返回 `roles` + `menus`（无 `permissions`），见 [../rbac-menu-design.md](../rbac-menu-design.md)。下文保留阶段当时设计措辞。
 
 ---
 
 ## 1. 本阶段目标与完成标准
 
-**目标**：实现注册 / 登录 / JWT 鉴权与 `/me`；业务 API 依赖统一验登录 + ACTIVE。
+**目标**：实现注册 / 登录 / JWT 鉴权与 `/me`；业务 API 依赖统一验登录 + ACTIVE（现网为 `status=1`）。
 
 | 完成标准 | 说明 |
 |----------|------|
 | 种子可登录 | `admin` / `123456` 登录成功，拿到 access token |
 | 可注册 | 新用户注册成功，默认角色 `user` |
-| `/me` | 返回 `id`、`username`、`status`、`roles[]`、`permissions[]`；种子 admin 的 roles 含 `admin` |
+| `/me` | 阶段目标为 `roles` + `permissions`；**现网**为 `roles` + `menus`（见 rbac-menu） |
 
 ---
 

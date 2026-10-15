@@ -1,7 +1,7 @@
 # Knowledge Hub 知识问答 — 技术方案设计文档
 
 - **日期**：2026-10-13
-- **状态**：待批准（RAG 链路已与实现对齐）
+- **状态**：已实现（与现网对齐；含 RBAC 菜单 / 双模式 / 投研 / SSE）
 - **作者**：项目组
 - **说明**：企业散落文档（PDF / docx / text / md）入库后的可问答知识库；问答管线为「混合检索 → Rerank → 带引用生成 / 规则拒答」，答案强制引用来源。
 
@@ -18,7 +18,9 @@
 
 | 文档 | 说明 |
 |------|------|
+| [rbac-menu-design.md](./rbac-menu-design.md) | User–Role–Menu：侧栏、系统管理、`status`/`visible` 为 `0|1` |
 | [chat-dual-mode-design.md](./chat-dual-mode-design.md) | 双模式外壳：`rag` / `direct` 会话隔离、路由与 API |
+| [chat-sse-design.md](./chat-sse-design.md) | 对话 SSE 事件协议与取消语义 |
 | [stock-research-agent-design.md](./stock-research-agent-design.md) | **`mode=direct` 现网实现**：投研 Multi-Agent（取代原闲聊） |
 
 ---
@@ -30,7 +32,7 @@ Knowledge Hub（本功能短名 **knowledge-qa**）把企业文档变成可自�
 **目标能力**（实现分步见 §10）：
 
 - 用户**注册 / 登录**（**JWT** access token；localStorage + Bearer）
-- **RBAC 表结构**：用户 / 角色 / 权限及关联表；种子角色 `admin`、`user`；注册默认绑 `user`；业务 API **只验已登录 + ACTIVE**
+- **RBAC 表结构**：用户 / 角色 / 菜单及关联表（见 [rbac-menu-design.md](./rbac-menu-design.md)）；种子角色 `admin`、`user`；注册默认绑 `user`；业务 API **只验已登录 + status=1**
 - 支持 PDF / **docx** / text / Markdown 入库与列表管理（**同步入库**）
 - **文档库 = 全员共享库**：任意已登录用户可上传 / 列表 / 详情 / 删除全库文档；问答检索范围 = 全库
 - **混合检索**（Chroma 向量 + 内存 BM25 → RRF）→ **BGE Rerank 分数门控** → **带引用生成**；依据不足规则拒答
@@ -48,7 +50,7 @@ Knowledge Hub（本功能短名 **knowledge-qa**）把企业文档变成可自�
 | 层 | 选型 | 说明 |
 |----|------|------|
 | 前端 | Vue 3 + Vite + JavaScript + Element Plus + Pinia + Axios | 登录注册、知识库；知识库问答 `/chat/rag`、投研助手 `/chat/direct` |
-| 投研 | LangGraph + 腾讯/新浪 HTTP + 可选 Redis + SMTP | 仅 `mode=direct`；见投研设计文档 |
+| 投研 | LangGraph + 腾讯/新浪 HTTP + AKShare 财务要点 + 可选 Redis + SMTP | 仅 `mode=direct`；四路并行 Analyst；见投研设计文档 |
 | 后端 | FastAPI + Uvicorn | REST；目录见 §2.3，模块见 §3 |
 | 问答管线 | 普通服务函数（`ChatOpenAI` / `OpenAIEmbeddings` + Rerank HTTP） | **混合检索 → Rerank → 生成/拒答** |
 | 关系库 | MySQL 8.0+ | 用户/RBAC、文档、chunk、会话（库名 `knowledge_hub`） |
@@ -91,9 +93,10 @@ uv pip install -r requirements.txt
 | Auth | `bcrypt`、`PyJWT` |
 | RAG / LLM | `langchain-core`、`langchain-openai`、`chromadb`、`rank_bm25`、`jieba` |
 | Document parsing | `pymupdf`、`python-docx` |
-| 投研 | `langgraph`、`requests`、`redis`、`markdown` |
+| 投研 | `langgraph`、`requests`、`akshare`、`redis`、`markdown` |
+| ASGI | `uvicorn`（已写入 `requirements.txt`） |
 
-说明：本机已有 `uvicorn` 不必写入；完整锁定版本见 `backend/requirements.txt`。
+完整锁定版本见 `backend/requirements.txt`。
 
 **配置键**（`backend/.env`；实现时补 `.env.example`）：
 
@@ -128,7 +131,9 @@ uv pip install -r requirements.txt
 knowledge-hub/
 ├── .docs/
 │   ├── knowledge-qa-design.md
+│   ├── rbac-menu-design.md      # User–Role–Menu 侧栏与系统管理
 │   ├── chat-dual-mode-design.md
+│   ├── chat-sse-design.md
 │   ├── stock-research-agent-design.md
 │   └── phase/
 │       ├── knowledge-qa-phase1-design.md
@@ -136,7 +141,7 @@ knowledge-hub/
 │       ├── knowledge-qa-phase3-design.md
 │       └── knowledge-qa-phase4-design.md
 ├── .cursor/rules/               # Cursor 约定（overview / backend / frontend）
-├── scripts/                     # 仓库根：迁移 + verify_*.py
+├── scripts/                     # 仓库根：迁移 + verify_*.py（含 verify_rbac_menu 等）
 ├── backend/
 │   ├── pyproject.toml
 │   ├── requirements.txt
@@ -157,21 +162,28 @@ knowledge-hub/
 │       │   ├── chroma.py
 │       │   ├── audit.py
 │       │   ├── logging_util.py
-│       │   └── redis_client.py   # 可选 Redis
+│       │   ├── redis_client.py   # 可选 Redis
+│       │   └── sse.py            # SSE 帧格式
 │       ├── models/
 │       │   ├── user.py
-│       │   ├── rbac.py          # role / permission / 关联表
+│       │   ├── rbac.py          # role / menu / user_role / role_menu
 │       │   ├── document.py
 │       │   ├── chunk.py
 │       │   ├── conversation.py
 │       │   └── message.py
 │       ├── schemas/
+│       │   ├── auth.py
+│       │   ├── chat.py
+│       │   └── system.py        # 用户 / 角色 / 菜单请求体
 │       ├── api/                 # HTTP 路由层（薄）
 │       │   ├── auth.py          # register / login / me
+│       │   ├── users.py · roles.py · menus.py
 │       │   ├── documents.py
 │       │   └── chat.py          # /api/chat、/api/chat/stream、/api/conversations
 │       ├── services/            # 业务层
 │       │   ├── auth.py
+│       │   ├── user_admin.py · role_admin.py · menu_admin.py
+│       │   ├── menu_tree.py     # /me 与管理端菜单树
 │       │   ├── ingest.py        # 入库/列表/删除
 │       │   ├── chat.py          # rag 检索生成 / direct → agent
 │       │   └── qa.py            # rag 组 prompt、调 LLM
@@ -180,12 +192,12 @@ knowledge-hub/
 │       │   ├── stream.py        # SSE 增量执行（stage + Writer 流）；见 chat-sse
 │       │   ├── state.py
 │       │   ├── logging_util.py  # 图内 deadline 辅助
-│       │   ├── agents/          # coordinator / quote|market|news / writer / mailer
-│       │   └── tools/           # tencent / symbol / email / report_pdf
+│       │   ├── agents/          # coordinator / quote|market|news|finance / writer / mailer
+│       │   └── tools/           # tencent / finance(AKShare) / symbol / email / report_pdf
 │       ├── auth/                # 认证支撑
 │       │   ├── security.py      # bcrypt + PyJWT
-│       │   ├── deps.py          # JWT + 查库确认 ACTIVE
-│       │   └── seed.py          # RBAC + 默认 admin（lifespan）
+│       │   ├── deps.py          # JWT + 查库确认 status=1
+│       │   └── seed.py          # 角色/菜单/role_menu + 默认 admin（lifespan）
 │       ├── ingest/              # 入库支撑
 │       │   ├── parser.py
 │       │   └── chunker.py
@@ -204,13 +216,16 @@ knowledge-hub/
     ├── .env.development
     └── src/
         ├── main.js              # 引入 assets/css/global.css
-        ├── App.vue
+        ├── App.vue                  # 仅 RouterView + 登录后 loadMe
         ├── assets/
         │   └── css/
         │       └── global.css   # 全局样式唯一入口（无 styles/）
+        ├── layouts/
+        │   └── AppLayout.vue        # 路由父级：左侧菜单壳 + 顶栏用户区（见 rbac-menu）
         ├── api/
         │   ├── http.js            # Bearer from localStorage；401→登录
         │   ├── auth.js
+        │   ├── users.js · roles.js · menus.js
         │   ├── documents.js
         │   └── chat.js
         ├── router/
@@ -222,11 +237,16 @@ knowledge-hub/
         │   ├── chat.js              # 知识库问答
         │   └── directChat.js        # 投研助手
         ├── utils/
-        │   └── markdown.js          # 助手 Markdown 安全渲染
+        │   ├── markdown.js          # 助手 Markdown 安全渲染
+        │   └── icons.js             # Element Plus Icons 名 → 组件
         ├── views/
         │   ├── auth/
         │   │   ├── LoginView.vue
         │   │   └── RegisterView.vue
+        │   ├── system/
+        │   │   ├── UserManageView.vue
+        │   │   ├── RoleManageView.vue
+        │   │   └── MenuManageView.vue
         │   ├── documents/
         │   │   └── DocumentListView.vue
         │   └── chat/
@@ -235,6 +255,8 @@ knowledge-hub/
         └── components/
             ├── ingest/
             │   └── UploadPanel.vue
+            ├── system/
+            │   └── IconSelect.vue       # 菜单图标选择
             └── chat/
                 ├── ChatWorkspace.vue
                 ├── MessageList.vue
@@ -250,7 +272,7 @@ knowledge-hub/
 | 前端 | Node v24.15.0；`npm run dev` → 5173 |
 | Token | **localStorage** + `Authorization: Bearer`（JWT） |
 | Token 过期 | 401 → 清 Token → 跳登录 |
-| 页面 | 登录、注册、文档管理；知识库问答 `/chat/rag`、投研助手 `/chat/direct` |
+| 页面 | 登录、注册、文档管理；知识库问答 `/chat/rag`、投研助手 `/chat/direct`；系统管理 `/system/users|roles|menus`（侧栏由 menus 驱动） |
 | 同名文件 | **拒绝上传**；删除为**物理删除**（先 Chroma 再库/文件，见 §4.3）后再传 |
 
 ---
@@ -264,12 +286,12 @@ knowledge-hub/
 ### 3.2 auth（JWT + RBAC）
 
 - **注册**：用户名 + 密码（**bcrypt** 哈希）→ 建 `sys_user` → 绑定角色 **`user`**（`sys_user_role`）
-- **登录**：校验密码且 `status=ACTIVE` → **PyJWT** 签发 access token（`JWT_EXPIRE_HOURS`，默认 24）→ 返回 Token + 用户基本信息
-- **鉴权依赖 `deps.py`**：解析 JWT → **再查库**用户存在且 `ACTIVE`，否则 `40101`
-- **RBAC**：五表结构 + 种子数据（见 §5.1.1）；接口只校验已登录
-- **种子（必做）**：`auth/seed.py` 在 **lifespan 启动时**幂等执行（见 §4.4）：角色/权限/关联 + 默认用户 **`admin` / `123456`**（bcrypt 哈希，`ACTIVE`，绑 `admin` 角色）；已存在则跳过，不覆盖密码
+- **登录**：校验密码且 `status=1` → **PyJWT** 签发 access token（`JWT_EXPIRE_HOURS`，默认 24）→ 返回 Token + 用户基本信息
+- **鉴权依赖 `deps.py`**：解析 JWT → **再查库**用户存在且 `status=1`，否则 `40101`
+- **RBAC**：User–Role–Menu 五表 + 种子数据（见 §5.1.1 与 [rbac-menu-design.md](./rbac-menu-design.md)）；接口只校验已登录；侧栏按菜单裁剪
+- **种子（必做）**：`auth/seed.py` 在 **lifespan 启动时**幂等执行（见 §4.4）：角色/菜单/role_menu + 默认用户 **`admin` / `123456`**（bcrypt 哈希，`status=1`，绑 `admin` 角色）；已存在则跳过，不覆盖密码
 - **登出**：前端删 localStorage
-- **`GET /api/auth/me`**：返回 `id`、`username`、`status`、`roles[]`、`permissions[]`
+- **`GET /api/auth/me`**：返回 `id`、`username`、`status`、`roles[]`、`menus`（树；无 `permissions`）
 
 ### 3.3 ingest
 
@@ -362,9 +384,10 @@ LLM 失败：若本请求已建会话/已落 user，保留之；可写一条失�
 lifespan：
   → 探测 MySQL 一次（失败则启动失败）
   → create_all 建表（若不存在）
-  → 执行 auth/seed.py（幂等）：角色/权限/关联 + 默认用户 admin
+  → 执行 auth/seed.py（幂等）：角色/菜单/role_menu + 默认用户 admin
   → 打开 Chroma（目录不存在则创建）
   → 从 MySQL 全量重建内存 BM25 索引
+  → 预热 A 股代码表（warm_symbol_cache；失败仅 WARNING，不挡启动）
 ```
 
 种子失败则**启动失败**（演示依赖可登录的 `admin`）。`/api/health`：MySQL 可达；Chroma 可打开。
@@ -379,13 +402,15 @@ lifespan：
 
 #### 5.1.1 认证与 RBAC
 
+> **现网以 [rbac-menu-design.md](./rbac-menu-design.md) 为准**：已从 User–Role–Permission 改为 User–Role–Menu；废弃 `sys_permission` / `sys_role_permission`。下列为摘要。
+
 **`sys_user`** — 用户
 
 - `id` BIGINT PK
 - `username` VARCHAR UNIQUE
 - `password_hash` VARCHAR
-- `status` VARCHAR（`ACTIVE` / `DISABLED`）
-- `created_at`, `updated_at` DATETIME
+- `status` SMALLINT（`1`=正常 / `0`=禁用）
+- `created_at`, `updated_at` DATETIME（另有审计列，见实现）
 
 > 角色走 `sys_user_role`。
 
@@ -396,13 +421,9 @@ lifespan：
 - `name` VARCHAR
 - `created_at`, `updated_at` DATETIME
 
-**`sys_permission`** — 权限
+**`sys_menu`** — 菜单（目录 / 菜单 / 按钮）
 
-- `id` BIGINT PK
-- `code` VARCHAR UNIQUE（如 `doc:upload`、`chat:ask`）
-- `name` VARCHAR
-- `type` VARCHAR（本版种子用 `api`）
-- `created_at`, `updated_at` DATETIME
+- `id` BIGINT PK；`parent_id`；`name`；`path`；`icon`；`type`（`catalog`/`menu`/`button`）；`perms`；`sort`；`visible`（`1`/`0`）；`status`（`1`/`0`）等（详见 rbac-menu 规格；无 `component` 列）
 
 **`sys_user_role`** — 用户–角色
 
@@ -410,26 +431,26 @@ lifespan：
 - `role_id` BIGINT
 - 联合唯一 `(user_id, role_id)`
 
-**`sys_role_permission`** — 角色–权限
+**`sys_role_menu`** — 角色–菜单（方案 A：只存勾选，多为叶子；`/me` 读时闭包补祖先）
 
 - `role_id` BIGINT
-- `permission_id` BIGINT
-- 联合唯一 `(role_id, permission_id)`
+- `menu_id` BIGINT
+- 联合唯一 `(role_id, menu_id)`
 
 **种子数据**（lifespan 启动时由 `auth/seed.py` **幂等**写入，已存在则跳过）：
 
 | 角色 | 说明 |
 |------|------|
-| `admin` | 管理员；关联文档/问答相关 api 码 |
-| `user` | 普通用户；注册默认；关联文档/问答相关 api 码 |
+| `admin` | 管理员；绑系统管理三菜单 + 业务三菜单（叶子） |
+| `user` | 普通用户；注册默认；仅绑业务三菜单（知识库问答 / 投研助手 / 文档） |
 
 | 种子用户 | 密码 | 状态 | 角色 |
 |----------|------|------|------|
-| `admin` | `123456` | `ACTIVE` | `admin` |
+| `admin` | `123456` | `1` | `admin` |
 
 > 密码以 **bcrypt** 写入 `password_hash`；仅本地/演示默认账号。用户名已存在时**不改密码、不重置角色**。
 
-接口：**合法 JWT 即可访问业务 API**；`/me` 可返回 roles / permissions。
+接口：**合法 JWT 即可访问业务 API**；`/me` 返回 roles + menus 树。管理端与侧栏细节见 [rbac-menu-design.md](./rbac-menu-design.md)。
 
 #### 5.1.2 知识库与会话
 
@@ -567,7 +588,7 @@ lifespan：
 
 ### 7.3 通用
 
-- lifespan：MySQL **探测 1 次**失败即启动失败；`create_all` + **RBAC/默认 admin 种子**；打开 Chroma；重建 BM25
+- lifespan：MySQL **探测 1 次**失败即启动失败；`create_all` + **RBAC 菜单种子 / 默认 admin**；打开 Chroma；重建 BM25；可选预热代码表
 - 单 worker（长入库期间其它请求会排队）
 - 禁用用户：依赖层查库拦截
 
@@ -602,7 +623,7 @@ lifespan：
 ## 8. 测试策略
 
 - 启动后可用种子账号 `admin` / `123456` 登录拿 JWT；注册用户默认角色 `user`；禁用用户持旧 Token → 401
-- `/me` 返回 roles/permissions；种子 `admin` 的 roles 含 `admin`
+- `/me` 返回 roles + menus；种子 `admin` 的 roles 含 `admin`
 - 同名 `40901`；并发双传同名至少一笔为 `40901`（非 500）
 - 入库中途失败后同名可再传（无残留库行）
 - 入库前端 timeout ≥ 业务耗时量级
@@ -618,7 +639,8 @@ lifespan：
 
 | 模块 | 路径前缀 | 说明 |
 |------|----------|------|
-| 认证 | `/api/auth` | `POST /register`、`POST /login`、`GET /me`（roles + permissions） |
+| 认证 | `/api/auth` | `POST /register`、`POST /login`、`GET /me`（roles + menus） |
+| 系统管理 | `/api/users`、`/api/roles`、`/api/menus` | 用户/角色/菜单 CRUD（见 [rbac-menu](./rbac-menu-design.md)） |
 | 文档 | `/api/documents` | 上传、列表、详情、**物理删除**（先 Chroma）；共享库：任意已登录用户可操作全库 |
 | 会话 | `/api/conversations` | 列表 / 消息详情 / 删除；仅本人 |
 | 问答 | `/api/chat` | 同步整包；`conversationId` / `mode` 可选（缺省 `rag`）；缺省则懒建会话并返回 id；已有则校验归属与 mode；rag 检索范围 = 全库；direct 见 [stock-research](./stock-research-agent-design.md) |
@@ -629,9 +651,11 @@ lifespan：
 
 | code | 含义 |
 |------|------|
+| `40001` | 参数错误（含无效 `mode`、会话混聊、菜单删有子节点 / 内置节点等） |
 | `40101` | 未登录 / Token 无效过期 / 用户禁用或不存在 |
 | `40102` | 用户名或密码错误 |
 | `40902` | 用户名已存在 |
+| `40903` | 角色 code 已存在（`ROLE_EXISTS`） |
 | `40401` | 文档不存在；或会话不存在 / 非本人 |
 | `40901` | 同名文档已存在 |
 | `41301` | 超过上传大小上限 |
@@ -647,7 +671,7 @@ lifespan：
 | Phase | 内容 | 完成标准 | 设计文档 |
 |-------|------|----------|----------|
 | 1 | 骨架 + MySQL/Chroma + CORS + lifespan（create_all + seed 落库） | health 绿；种子用户 `admin` 行存在（密码已哈希） | [phase1](./phase/knowledge-qa-phase1-design.md) |
-| 2 | 注册/登录/JWT + deps 查 ACTIVE；me；登出靠前端清 Token | `admin`/`123456` 可登录；可注册；`/me` 可见 roles/permissions | [phase2](./phase/knowledge-qa-phase2-design.md) |
+| 2 | 注册/登录/JWT + deps 查 status=1；me；登出靠前端清 Token | `admin`/`123456` 可登录；可注册；`/me` 可见 roles + menus（见 [rbac-menu](./rbac-menu-design.md)） | [phase2](./phase/knowledge-qa-phase2-design.md) |
 | 3 | 同步 ingest（先算完再落库，Chroma 最后写）+ 同名拒绝 + 简单回滚 + 物理删除（先 Chroma） | 成功可见文档；失败可重传同名；删失败文档仍在 | [phase3](./phase/knowledge-qa-phase3-design.md) |
 | 4 | 检索→生成问答 + 前端（登录/文档/对话；入库长 timeout + 等待文案） | **主链路可演示**（引用/拒答） | [phase4](./phase/knowledge-qa-phase4-design.md) |
 
@@ -664,22 +688,20 @@ lifespan：
 
 ---
 
-## 12. 批准清单
+## 12. 现网对齐清单
 
-- [ ] 入库：先算完再落库；失败回滚；同名 → 40901
-- [ ] 物理删除：先 Chroma（失败整单失败）再库/文件
-- [ ] 问答为「混合检索→Rerank→生成/拒答」；rag 生成不带历史；direct 为投研 Multi-Agent（见 [stock-research](./stock-research-agent-design.md)）；检索用当前原文
-- [ ] Chroma 最后写；失败简单回滚
-- [ ] 切分按字符；无标题按段落滑窗；仅 pdf/docx/md/txt；无正文 → 50001
-- [ ] JWT + 注册/登录；RBAC 表；lifespan 幂等种子含 `admin`/`123456`；API 只验登录
-- [ ] 会话归属；citations 只存 snippet
-- [ ] 会话由 `/api/chat` 懒建；首条后响应带回 `conversationId`
-- [ ] 文档为全员共享库；会话仍仅本人
-- [ ] 长请求：入库 10min；问答 UI 走 SSE（可停止）；同步 `/api/chat` 仍可用；前端 loading / stage 与超时文案
-- [ ] Chroma `hnsw:space=cosine`；精排分数门控（软地板 + 相对落差 + Top1 兜底），滤完为空则拒
-
-**批准人：**  
-**批准日期：**  
+- [x] 入库：先算完再落库；失败回滚；同名 → 40901
+- [x] 物理删除：先 Chroma（失败整单失败）再库/文件
+- [x] 问答为「混合检索→Rerank→生成/拒答」；rag 生成不带历史；direct 为投研 Multi-Agent（见 [stock-research](./stock-research-agent-design.md)）；检索用当前原文
+- [x] Chroma 最后写；失败简单回滚
+- [x] 切分按字符；无标题按段落滑窗；仅 pdf/docx/md/txt；无正文 → 50001
+- [x] JWT + 注册/登录；RBAC 菜单五表（见 [rbac-menu](./rbac-menu-design.md)）；lifespan 幂等种子含 `admin`/`123456`；API 只验登录
+- [x] 会话归属；citations 只存 snippet
+- [x] 会话由 `/api/chat` 懒建；首条后响应带回 `conversationId`
+- [x] 文档为全员共享库；会话仍仅本人
+- [x] 长请求：入库 10min；问答 UI 走 SSE（可停止）；同步 `/api/chat` 仍可用；前端 loading / stage 与超时文案
+- [x] Chroma `hnsw:space=cosine`；精排分数门控（软地板 + 相对落差 + Top1 兜底），滤完为空则拒
+- [x] 投研四路 Analyst（含 finance / AKShare）；侧栏菜单导航（非顶栏三链接）
 
 ---
 
@@ -687,7 +709,7 @@ lifespan：
 
 | 项 | 结论 |
 |----|------|
-| 用户/权限 | 注册+登录+JWT；RBAC 五表；lifespan 幂等种子（角色/权限 + 用户 `admin`/`123456` 绑 admin）；注册绑 `user`；API 只验登录；登出前端删 Token |
+| 用户/权限 | 注册+登录+JWT；RBAC 五表（user/role/menu/user_role/role_menu，见 [rbac-menu](./rbac-menu-design.md)）；lifespan 幂等种子（角色/菜单 + 用户 `admin`/`123456` 绑 admin）；注册绑 `user`；API 只验登录；侧栏按 menus；登出前端删 Token |
 | 入库 | 先解析/Embedding，成功后再写库/落盘；Chroma 最后写；失败回滚；同名→40901；无正文→50001；无 PROCESSING / 无僵尸清理 |
 | 解析/切分 | 字符窗 max≈800 / overlap≈100；有标题用 heading；无标题段落滑窗；仅 pdf/docx/md/txt |
 | 长请求超时 | 入库 Axios 600s；问答 SSE + 同步 120s；Vite/Nginx SSE 去缓冲；前端长等待 / stage 文案 |

@@ -3,8 +3,9 @@
 企业文档知识库问答 + 股票投研助手：
 
 - **知识库问答（`mode=rag`）**：上传 PDF / docx / md / txt → 解析切分 → Embedding 入库 → 向量+BM25 混合检索（RRF）→ BGE Rerank → 依据不足拒答，否则一次 LLM 生成带引用答案。
-- **投研助手（`mode=direct`）**：一句话任务 → LangGraph 固定拓扑 Multi-Agent（Coordinator → 并行 Analyst → Writer → Mailer）→ Markdown 报告；可选 SMTP 发 PDF 附件。
-- **对话 SSE**：UI 主路径 `POST /api/chat/stream`（打字流 + 投研阶段进度 + 可停止）；同步 `POST /api/chat` 仍保留供脚本/兼容。
+- **投研助手（`mode=direct`）**：一句话任务 → LangGraph 固定拓扑 Multi-Agent（Coordinator → 并行 quote/market/news/finance → Writer → Mailer）→ Markdown 报告；可选 SMTP 发 PDF 附件。
+- **菜单型 RBAC**：JWT + User–Role–Menu；侧栏按 `/me.menus` 渲染；系统管理（用户 / 角色 / 菜单）。
+- **对话 SSE**：UI 主路径 `POST /api/chat/stream`（打字流 + 投研阶段进度含财务 + 可停止）；同步 `POST /api/chat` 仍保留供脚本/兼容。
 
 ## 技术栈
 
@@ -13,12 +14,12 @@
 | 前端 | Vue 3 + Vite + Pinia + Element Plus + Axios（短请求）+ `fetch` SSE（问答流） |
 | 后端 | FastAPI + SQLAlchemy + MySQL |
 | 向量 / 模型 | Chroma（本地）+ 内存 BM25 + SiliconFlow（Embedding / Rerank / Chat） |
-| 投研 | LangGraph + 腾讯行情/资讯 HTTP + 新浪 A 股代码表（可选 Redis 缓存）+ SMTP |
+| 投研 | LangGraph + 腾讯行情/资讯 + AKShare 财务要点 + 新浪代码表（可选 Redis）+ SMTP |
 
 ## 环境要求
 
 - Python **3.12.9**
-- Node.js **18+**（推荐与本机已装版本一致）
+- Node.js **18+**（主规格锁定示例为 **v24.15.0**）
 - MySQL **8.0+**（提前创建库 `knowledge_hub`）
 - [uv](https://github.com/astral-sh/uv)（推荐，用于安装后端依赖）
 - SiliconFlow API Key（Embedding + Rerank + LLM）
@@ -68,27 +69,28 @@ npm run dev
 
 ## 主要能力
 
-- 注册 / 登录（JWT Bearer）；业务接口验登录 + ACTIVE
+- 注册 / 登录（JWT Bearer）；业务接口验登录 + `status=1`（`1`=正常 / `0`=禁用）
+- **菜单型 RBAC**：User–Role–Menu；侧栏按 `/me.menus` 渲染；系统管理三页（用户 / 角色 / 菜单）
 - 文档共享库：上传、列表、详情、物理删除
 - **知识库问答**（`/chat/rag`）：向量+BM25 → RRF → Rerank 分数门控 → 规则拒答或带 `citations` 生成；每轮独立，生成不带闲聊历史；SSE 打字流，引用先出
-- **投研助手**（`/chat/direct`）：Multi-Agent 近 30 日行情报告；SSE 阶段进度 + Writer 打字流；助手 Markdown 渲染；话术邮箱优先，否则 `RESEARCH_DEFAULT_EMAIL`；邮件为 PDF 附件（不含聊天投递说明；PDF 换行与网页 `breaks` 对齐）
+- **投研助手**（`/chat/direct`）：Multi-Agent 近 30 日报告（行情/走势/资讯/财务要点）；SSE 阶段进度 + Writer 打字流；助手 Markdown 渲染；话术邮箱优先，否则 `RESEARCH_DEFAULT_EMAIL`；邮件为 PDF 附件（不含聊天投递说明；PDF 换行与网页 `breaks` 对齐）
 - 会话按 `mode` 隔离，禁止混聊；发送中可「停止」（取消不落半成品 assistant，投研不发信）
 
 ## 目录结构（摘要）
 
 ```
 knowledge-hub/
-├── .docs/                         # 主规格 + phase + 双模式 / 投研 / SSE
+├── .docs/                         # 主规格 + phase + 双模式 / 投研 / SSE / RBAC
 ├── .cursor/rules/                 # Cursor 约定
 ├── scripts/                       # 迁移 + verify_*.py（仓库根）
 ├── backend/
 │   ├── app/
-│   │   ├── main.py                # 入口、lifespan、CORS
-│   │   ├── api/                   # HTTP 路由（薄）；含 /api/chat/stream
-│   │   ├── services/              # 业务（auth / ingest / chat / qa）
+│   │   ├── main.py                # 入口、lifespan、CORS、挂路由
+│   │   ├── api/                   # auth / documents / chat[+stream] / users / roles / menus
+│   │   ├── services/              # auth · ingest · chat · qa · user/role/menu_admin · menu_tree
 │   │   ├── agent/                 # 投研：graph.py · stream.py · agents/ · tools/
 │   │   ├── auth/ · ingest/ · rag/ · llm/
-│   │   ├── models/ · schemas/
+│   │   ├── models/ · schemas/     # 含 rbac / system
 │   │   └── common/                # config、db、errors、chroma、redis、sse、logging
 │   ├── scripts/                   # 部分 phase 回归脚本
 │   ├── data/kb/ · data/chroma/
@@ -98,15 +100,17 @@ knowledge-hub/
     ├── src/
     │   ├── main.js · App.vue
     │   ├── assets/css/global.css  # 全局样式（唯一入口）
+    │   ├── layouts/AppLayout.vue  # 左侧菜单壳 + 顶栏用户区
     │   ├── api/ · stores/ · router/ · utils/
-    │   ├── views/{auth,documents,chat}
-    │   └── components/{chat,ingest}
+    │   ├── views/{auth,documents,chat,system}
+    │   └── components/{chat,ingest,system}
     └── vite.config.js             # /api 与 /api/chat/stream 代理
 ```
 
 规格详见 `.docs/`：
 
 - [主规格](.docs/knowledge-qa-design.md)
+- [菜单型 RBAC](.docs/rbac-menu-design.md)
 - [双模式外壳](.docs/chat-dual-mode-design.md)
 - [投研 Multi-Agent](.docs/stock-research-agent-design.md)
 - [对话 SSE](.docs/chat-sse-design.md)
@@ -143,7 +147,18 @@ cd backend
 
 # 对话 SSE 冒烟（A6/A7/A8 + 流式 meta/done）
 .\.venv\Scripts\python.exe ..\scripts\verify_chat_sse.py --user admin --password 123456
+
+# 菜单型 RBAC 冒烟
+.\.venv\Scripts\python.exe ..\scripts\verify_rbac_menu.py
+
+# 投研 Multi-Agent 冒烟
+.\.venv\Scripts\python.exe ..\scripts\verify_stock_research_agent.py
+
+# 双模式外壳（可选）
+.\.venv\Scripts\python.exe ..\scripts\verify_chat_dual_mode.py
 ```
+
+旧库若仍有 `sys_permission` / `sys_role_permission`，可先跑 `..\scripts\migrate_rbac_menu.py` 再重启后端。
 
 ## License
 

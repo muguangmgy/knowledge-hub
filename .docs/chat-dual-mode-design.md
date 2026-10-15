@@ -8,7 +8,7 @@
 - **后续规格**：[stock-research-agent-design.md](./stock-research-agent-design.md)（`mode=direct` 现网实现）
 - **说明**：在「知识库问答（RAG）」之外增加第二条会话入口；用户显式选择模式；同一会话一种模式，不允许混聊。
 
-> **现网对齐（2026-10-14）**：本文定义的 **会话 `mode`、API、双路由、禁止混聊** 仍有效。原「`direct` = 纯 LLM 闲聊 + 最近 6 条历史」已被 [stock-research-agent-design.md](./stock-research-agent-design.md) **整段替换**：顶栏文案为「投研助手」，`_ask_direct` → LangGraph Multi-Agent，**不带闲聊历史**。下文留作双模式外壳与迁移依据；`direct` 内核以投研文档为准。
+> **现网对齐（2026-10-14）**：本文定义的 **会话 `mode`、API、双路由、禁止混聊** 仍有效。原「`direct` = 纯 LLM 闲聊 + 最近 6 条历史」已被 [stock-research-agent-design.md](./stock-research-agent-design.md) **整段替换**：产品文案为「投研助手」，`_ask_direct` → LangGraph Multi-Agent，**不带闲聊历史**。业务入口现由左侧菜单驱动（见 [rbac-menu-design.md](./rbac-menu-design.md)），不再用顶栏三链接。下文留作双模式外壳与迁移依据；`direct` 内核以投研文档为准。
 
 ---
 
@@ -18,7 +18,7 @@ Knowledge Hub 当前对话入口固定走混合检索 → Rerank → 拒答 / �
 
 **目标能力**（外壳；仍有效）：
 
-- 用户在顶栏常驻切换「知识库问答 | 投研助手」
+- 用户在侧栏切换「知识库问答 | 投研助手」（由 `sys_menu` 驱动）
 - 同接口 `POST /api/chat` 通过 `mode` 区分行为：`rag` / `direct`
 - 会话级绑定模式：懒建时写入 `mode`，续聊必须一致
 - 会话列表按 `mode` 过滤，两套前端入口各自只展示本模式历史
@@ -38,12 +38,12 @@ Knowledge Hub 当前对话入口固定走混合检索 → Rerank → 拒答 / �
 | 数据 | 系统相关表前缀改为 `sys_`（业务表去掉 kh_ 前缀）；`conversation` 增加 `mode` |
 | API | `ChatRequest.mode`；列表 `?mode=`；会话响应带 `mode`；混聊校验 |
 | 后端 | 系统表 ORM/`__tablename__`/注释同步为 `sys_*`；`ask` 按 mode 分支；`rag` 去掉生成历史；`direct` 原为直调 LLM（现网见投研文档） |
-| 前端 | 顶栏双入口；路由 `/chat/rag` 与 `/chat/direct`；两套 View/Store |
+| 前端 | 侧栏双入口（`AppLayout`）；路由 `/chat/rag` 与 `/chat/direct`；两套 View/Store |
 
 ### 2.2 非目标（本规格不做）
 
 - ~~SSE / 流式输出~~ → 已由 [chat-sse-design.md](./chat-sse-design.md) 交付（`POST /api/chat/stream`）；本规格仍只定义 mode 外壳
-- 按钮级权限拆分（如 `chat:free`）；仍只验已登录 + ACTIVE
+- 按钮级权限拆分（如 `chat:free`）；仍只验已登录 + `status=1`
 - 私有文档库 / 按文档 ACL 检索
 - `direct` 独立模型、独立 temperature 配置（共用现有 `LLM_*`）
 - 同一会话内切换模式或混用历史
@@ -84,15 +84,17 @@ flowchart TD
 
 库名 `knowledge_hub` 不变。API 路径与 JSON 字段名不受影响。
 
-**系统表**（账号 / RBAC）：
+**系统表**（账号 / RBAC；本规格迁表时的目标名）：
 
 | 现表名 | 新表名 |
 |--------|--------|
 | `kh_user` | `sys_user` |
 | `kh_role` | `sys_role` |
-| `kh_permission` | `sys_permission` |
+| `kh_permission` | `sys_permission`（**历史**；现网已废弃，见 [rbac-menu-design.md](./rbac-menu-design.md)） |
 | `kh_user_role` | `sys_user_role` |
-| `kh_role_permission` | `sys_role_permission` |
+| `kh_role_permission` | `sys_role_permission`（**历史**；现网已废弃） |
+
+> **现网 RBAC**：User–Role–Menu（`sys_menu` / `sys_role_menu`）；旧库可用 [`scripts/migrate_rbac_menu.py`](../scripts/migrate_rbac_menu.py) DROP 权限表。
 
 **业务表**（去掉 `kh_`）：
 
@@ -256,7 +258,7 @@ flowchart TD
 
 | 项 | 约定 |
 |----|------|
-| 顶栏 | [`App.vue`](../frontend/src/App.vue)：常驻「知识库问答」「投研助手」（可保留「文档」） |
+| 导航 | 现网为左侧菜单（见 [rbac-menu-design.md](./rbac-menu-design.md)）；业务入口「知识库问答」「投研助手」「文档」由 `sys_menu` 驱动，不再用顶栏三链接 |
 | 路由 | `/chat/rag` → rag 页；`/chat/direct` → 投研页；`/chat` 重定向到 `/chat/rag`；默认登录落地 `/chat/rag` |
 
 切换 Tab = 切换路由进入另一套页面，**不**把当前会话 ID 带到另一模式。
@@ -312,7 +314,7 @@ flowchart TD
 
 | 编号 | 标准 |
 |------|------|
-| A1 | 顶栏可在「知识库问答」与「投研助手」间切换，进入不同路由 |
+| A1 | 侧栏可在「知识库问答」与「投研助手」间切换，进入不同路由 |
 | A2 | rag 页提问仍走检索；有依据时带 citations，不足时 `rejected=true` |
 | A3 | rag 多轮续聊时，生成侧**不依赖**此前问答内容作为上下文（仅当前问 + 检索） |
 | A4 | direct 页提问不触发检索/Embedding；无引用区；现网产出投研报告（细节见投研验收） |
@@ -327,24 +329,21 @@ flowchart TD
 
 ## 10. 与主规格关系
 
-- RAG 检索、Rerank 门控、入库、RBAC 表结构等仍以 [knowledge-qa-design.md](./knowledge-qa-design.md) 与 phase1–4 为准；**双模式细节与系统表 `sys_` 前缀以本文为准**。
+- RAG 检索、Rerank 门控、入库等仍以 [knowledge-qa-design.md](./knowledge-qa-design.md) 与 phase1–4 为准；**双模式细节与系统表 `sys_` 前缀以本文为准**；**菜单型 RBAC 以 [rbac-menu-design.md](./rbac-menu-design.md) 为准**（已替代本文 §4.0 中的 permission 表）。
 - 主规格中「对话可带最近几条历史直接进生成 prompt」在双模式落地后对 **`rag` 废止**；投研落地后对 **`direct` 闲聊历史亦废止**（`direct` 内核见 [stock-research-agent-design.md](./stock-research-agent-design.md)）。
-- 系统表 `sys_*`、业务表去 `kh_`、`conversation.mode`、双路由仍以本文为准。
+- 系统表 `sys_*`、业务表去 `kh_`、`conversation.mode`、双路由仍以本文为准；业务入口导航现为侧栏菜单。
 
 ---
 
-## 11. 批准清单
+## 11. 现网对齐清单
 
-- [ ] 目标与非目标无争议（含：`rag` 有意不做多轮指代，见 §2.2）
-- [ ] `mode` 枚举为 `rag` / `direct`；会话级绑定、禁止混聊
-- [ ] 同接口加 `mode`；字段缺失与 `null` 均默认 `rag`；非法非空值才 `40001`
-- [ ] 列表不传 `mode` 默认只返回 `rag`（兼容旧前端）；新前端显式传 mode
-- [ ] 前端两套入口；复用组件 props 无 store；direct 不引入 CitationList/拒答
-- [ ] rag / direct 生成均不依赖闲聊历史（direct 内核见投研文档）
-- [ ] 系统表 → `sys_*`，业务表去 `kh_`（§4.0）；Chroma `kh_chunks` 不改
-- [ ] 存量：`conversation` 表末尾 `ADD COLUMN ... NOT NULL DEFAULT 'rag'`（无 AFTER/FIRST）
-- [ ] 主规格与投研规格已与现网对齐
-- [ ] 验收标准可演示（含 A5b/A6/A8/A9）
-
-**批准人：**  
-**批准日期：**  
+- [x] 目标与非目标无争议（含：`rag` 有意不做多轮指代，见 §2.2）
+- [x] `mode` 枚举为 `rag` / `direct`；会话级绑定、禁止混聊
+- [x] 同接口加 `mode`；字段缺失与 `null` 均默认 `rag`；非法非空值才 `40001`
+- [x] 列表不传 `mode` 默认只返回 `rag`（兼容旧前端）；新前端显式传 mode
+- [x] 前端两套入口（现网为侧栏）；复用组件 props 入 store；direct 不引入 CitationList/拒答
+- [x] rag / direct 生成均不依赖闲聊历史（direct 内核见投研文档）
+- [x] 系统表 → `sys_*`，业务表去 `kh_`（§4.0）；Chroma `kh_chunks` 不改
+- [x] 存量：`conversation` 表末尾 `ADD COLUMN ... NOT NULL DEFAULT 'rag'`（无 AFTER/FIRST）
+- [x] 主规格与投研规格已与现网对齐；导航见 [rbac-menu-design.md](./rbac-menu-design.md)
+- [x] 验收标准可演示（含 A5b/A6/A8/A9）

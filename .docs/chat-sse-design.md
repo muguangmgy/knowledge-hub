@@ -1,7 +1,7 @@
 # Knowledge Hub — 对话 SSE 流式输出技术方案设计文档
 
 - **日期**：2026-10-15
-- **状态**：已实现（待验收）
+- **状态**：已实现
 - **作者**：项目组
 - **功能短名**：`chat-sse`
 - **对应主文档**：[knowledge-qa-design.md](./knowledge-qa-design.md)
@@ -136,6 +136,7 @@ flowchart TD
 | `quote` | 行情 Analyst |
 | `market` | 走势 Analyst |
 | `news` | 资讯 Analyst |
+| `finance` | 财务 Analyst（AKShare；文案「正在整理财务要点…」） |
 | `writer` | 报告撰写（随后应有 `delta`） |
 | `mailer` | 发信闸门与 SMTP（若触发） |
 

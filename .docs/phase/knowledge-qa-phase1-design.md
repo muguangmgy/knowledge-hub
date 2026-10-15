@@ -1,10 +1,11 @@
 # Knowledge Hub — Phase 1 设计文档（基础设施）
 
 - **日期**：2026-10-12
-- **状态**：已完成
+- **状态**：已完成（历史阶段文档）
 - **对应主文档**：[../knowledge-qa-design.md](../knowledge-qa-design.md)
 - **依赖**：无（首阶段）
 - **下一阶段**：[knowledge-qa-phase2-design.md](./knowledge-qa-phase2-design.md)
+- **现网说明**：用户 `status` 为 `0|1`（非 ACTIVE 字符串）；RBAC 已改为 User–Role–Menu，见 [../rbac-menu-design.md](../rbac-menu-design.md)。下文保留阶段当时设计措辞。
 
 ---
 
