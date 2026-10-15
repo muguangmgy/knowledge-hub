@@ -1,33 +1,41 @@
 ---
 description: Vue3 前端 api/store/view 约定
-globs: frontend/src/**/*.{js,vue}
+globs: frontend/**/*.{js,vue}
 alwaysApply: false
 ---
 
 # Frontend（Vue 3）
 
-栈：Vue 3 + Vite + **JavaScript**（非 TS）+ Pinia + Element Plus + Axios（短请求）+ **`fetch` SSE**（问答流）。开发端口 **5173**；`VITE_API_BASE` 默认为空，靠 Vite 把 `/api` 代理到 `127.0.0.1:8000`。`vite.config.js` 中 **`/api/chat/stream` 单独代理**（关缓冲、拉长超时），须写在通用 `/api` 之前。
+目录地图与产品能力见 `project-overview` 与 `.docs/`；本规则只约束**怎么写前端**。
 
-## 结构
+栈：Vue 3 + Vite + **JavaScript**（非 TS）+ Pinia + Element Plus + Axios（短请求）+ **`fetch` SSE**（问答流）。开发端口 **5173**；`VITE_API_BASE` 默认为空，靠 Vite 把 `/api` 代理到 `127.0.0.1:8000`。`vite.config.js` 中 **`/api/chat/stream` 须写在通用 `/api` 之前**（关缓冲、拉长超时）。
 
-- `api/*`：纯 HTTP / SSE；`stores/*`：状态编排；`views` 薄；复用进 `components/`
-- 页面：`views/auth`（登录/注册）、`documents`、`chat`（`ChatView` rag / `DirectChatView` 投研）
-- 全局样式：仅 `assets/css/global.css`（`main.js` 引入；**不要**再建 `styles/`）
+## 分层
+
+- `api/*`：纯 HTTP / SSE（`http.js` 封装短请求；业务：`auth`/`documents`/`chat`；系统管理：`users`/`roles`/`menus`）
+- `stores/*`：状态编排；`views` 薄；复用进 `components/`（`chat` / `ingest` / `system`）
+- 对话：`createChatStore.js` 按 `mode` 工厂生成；`chat`（rag）与 `directChat`（投研）各一份，状态隔离，禁止混聊
+- 用户：`stores/user.js`（Token + `/me` 的 `profile`，含 `menus` 供侧栏）
+- 根组件 `App.vue` 仅 `<RouterView />` + 登录后补拉 `/me`；已登录壳由路由父级 `layouts/AppLayout.vue` 提供
+- 图标：`utils/icons.js`；菜单 `icon` 存组件名字符串
 - 助手 Markdown：`utils/markdown.js`（DOMPurify，`breaks: true`）；投研报告表格走安全 HTML
-- Token：`localStorage` 键 `kh_token`；经 `api/http.js` 读写；SSE 用 `fetch` 时自行带 `Authorization`
+- 样式：全局只进 `assets/css/global.css`（**不要**再建 `styles/`）；组件用 `<style scoped>`
+- Token：`localStorage` 键 `kh_token`，经 `api/http.js` 读写；SSE 用 `fetch` 时自行带 `Authorization`
+- 字段与后端对齐：请求/响应 **camelCase**；用户/菜单 `status`、`visible` 为数字 `0|1`
+- SSE `stage` 文案来自服务端 `message`，前端原样展示（勿在前端硬编码各 stage 文案）
 
 ## 路由
 
-- 公开页：`/login`、`/register`（`meta.public`）
-- 需登录：`/chat/rag`（知识库问答）、`/chat/direct`（投研助手）、`/documents`；无 Token → `/login?redirect=...`
-- 默认 `/`、`/chat` → `/chat/rag`；两套会话 store 按 `mode` 隔离，禁止混聊
+- 公开页：`/login`、`/register`（`meta.public`，无侧栏）
+- 需登录：业务与系统管理挂 `AppLayout` 子路由；无 Token → `/login?redirect=...`
+- 侧栏显隐由 `profile.menus` 决定；路由表可静态注册全部页面（本版不做按菜单强拦直链）
+- 默认 `/`、`/chat` → `/chat/rag`（固定落地，非「首个有权限菜单」）
 
 ## HTTP / SSE
 
 - 短请求一律走 `api/http.js`（Bearer、`code !== 0` 拒绝、401/`40101` 清 Token 跳登录）
 - **问答 UI 主路径**：`askChatStream`（`POST /api/chat/stream`）；**不要**用 Axios 扛长流，**不要**用原生 `EventSource`（难带 Bearer）
 - 同步 `askChat`（`POST /api/chat`）仅脚本/兼容；超时仍 `120000`
-- 字段 **camelCase**（`accessToken`、`conversationId`）
 - 其它超时：入库 `600000`；勿假装超时成功
 
 ```js
