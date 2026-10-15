@@ -38,5 +38,5 @@ def me(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """当前用户资料（含 roles / permissions）。"""
+    """当前用户资料（含 roles / menus）。"""
     return ok(auth_service.get_user_profile(db, current_user))

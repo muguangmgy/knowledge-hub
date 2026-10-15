@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, String, func
+from sqlalchemy import BigInteger, DateTime, SmallInteger, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.common.db import Base
@@ -21,11 +21,12 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column(
         String(255), nullable=False, comment="密码哈希（bcrypt）"
     )
-    status: Mapped[str] = mapped_column(
-        String(32),
+    status: Mapped[int] = mapped_column(
+        SmallInteger,
         nullable=False,
-        default="ACTIVE",
-        comment="账号状态：ACTIVE=正常，DISABLED=禁用",
+        default=1,
+        server_default="1",
+        comment="账号状态：1=正常，0=禁用",
     )
     created_by: Mapped[int | None] = mapped_column(
         BigInteger, nullable=True, comment="创建人用户ID（sys_user.id；种子可空）"

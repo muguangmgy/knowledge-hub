@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, String, UniqueConstraint, func
+from sqlalchemy import BigInteger, DateTime, Integer, SmallInteger, String, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.common.db import Base
@@ -39,29 +39,49 @@ class Role(Base):
     )
 
 
-class Permission(Base):
-    """权限码（本版仅供 /me 展示）。"""
+class Menu(Base):
+    """菜单 / 目录 / 按钮。"""
 
-    __tablename__ = "sys_permission"
-    __table_args__ = {"comment": "权限表"}
+    __tablename__ = "sys_menu"
+    __table_args__ = {"comment": "菜单表"}
 
     id: Mapped[int] = mapped_column(
-        BigInteger, primary_key=True, autoincrement=True, comment="权限ID"
+        BigInteger, primary_key=True, autoincrement=True, comment="菜单ID"
     )
-    code: Mapped[str] = mapped_column(
-        String(64),
-        unique=True,
-        nullable=False,
-        comment="权限编码（如 doc:upload、chat:ask）",
+    parent_id: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0, server_default="0", comment="父菜单ID；0=根"
     )
     name: Mapped[str] = mapped_column(
-        String(128), nullable=False, comment="权限显示名称"
+        String(128), nullable=False, comment="显示名称"
+    )
+    path: Mapped[str | None] = mapped_column(
+        String(255), nullable=True, comment="前端路由 path"
+    )
+    icon: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, comment="图标名"
     )
     type: Mapped[str] = mapped_column(
-        String(32),
+        String(32), nullable=False, comment="catalog | menu | button"
+    )
+    perms: Mapped[str | None] = mapped_column(
+        String(128), nullable=True, comment="权限标识（本版不用于接口拦截）"
+    )
+    sort: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0", comment="同级排序升序"
+    )
+    visible: Mapped[int] = mapped_column(
+        SmallInteger,
         nullable=False,
-        default="api",
-        comment="权限类型（本版种子均为 api）",
+        default=1,
+        server_default="1",
+        comment="是否可见：1=显示，0=隐藏",
+    )
+    status: Mapped[int] = mapped_column(
+        SmallInteger,
+        nullable=False,
+        default=1,
+        server_default="1",
+        comment="状态：1=正常，0=禁用",
     )
     created_by: Mapped[int | None] = mapped_column(
         BigInteger, nullable=True, comment="创建人用户ID（sys_user.id；种子可空）"
@@ -117,13 +137,13 @@ class UserRole(Base):
     )
 
 
-class RolePermission(Base):
-    """角色-权限关联。"""
+class RoleMenu(Base):
+    """角色-菜单关联（方案 A：只存勾选节点）。"""
 
-    __tablename__ = "sys_role_permission"
+    __tablename__ = "sys_role_menu"
     __table_args__ = (
-        UniqueConstraint("role_id", "permission_id", name="uq_role_permission"),
-        {"comment": "角色-权限关联表"},
+        UniqueConstraint("role_id", "menu_id", name="uq_role_menu"),
+        {"comment": "角色-菜单关联表"},
     )
 
     id: Mapped[int] = mapped_column(
@@ -132,8 +152,8 @@ class RolePermission(Base):
     role_id: Mapped[int] = mapped_column(
         BigInteger, nullable=False, comment="角色ID（sys_role.id）"
     )
-    permission_id: Mapped[int] = mapped_column(
-        BigInteger, nullable=False, comment="权限ID（sys_permission.id）"
+    menu_id: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, comment="菜单ID（sys_menu.id）"
     )
     created_by: Mapped[int | None] = mapped_column(
         BigInteger, nullable=True, comment="创建人用户ID（sys_user.id；种子可空）"

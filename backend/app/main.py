@@ -7,6 +7,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.auth import router as auth_router
 from app.api.chat import router as chat_router
 from app.api.documents import router as documents_router
+from app.api.menus import router as menus_router
+from app.api.roles import router as roles_router
+from app.api.users import router as users_router
 from app.auth.seed import run_seed
 from app.common.chroma import open_chroma
 from app.common.config import get_settings
@@ -90,6 +93,9 @@ async def app_error_handler(_request, exc: AppError):
 
 
 app.include_router(auth_router)
+app.include_router(users_router)
+app.include_router(roles_router)
+app.include_router(menus_router)
 app.include_router(documents_router)
 app.include_router(chat_router)
 

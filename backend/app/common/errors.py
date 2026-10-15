@@ -12,10 +12,11 @@ class AppError(Exception):
 class ErrorCode:
     """业务错误码常量（与设计文档对齐）。"""
 
-    BAD_REQUEST = 40001  # 参数错误（如无效 mode / 会话模式不匹配）
+    BAD_REQUEST = 40001  # 参数错误（无效 mode / 混聊 / 删内置菜单或角色等）
     UNAUTHORIZED = 40101  # 未登录 / Token 无效 / 用户禁用
     BAD_CREDENTIALS = 40102  # 用户名或密码错误
-    USERNAME_EXISTS = 40902
+    USERNAME_EXISTS = 40902  # 用户名已存在
+    ROLE_EXISTS = 40903  # 角色 code 已存在
     NOT_FOUND = 40401
     DOC_EXISTS = 40901
     PAYLOAD_TOO_LARGE = 41301
