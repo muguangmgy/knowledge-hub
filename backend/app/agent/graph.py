@@ -39,7 +39,7 @@ def _route_after_coordinator(state: ResearchState) -> list[_Analyst]:
 
 
 def _build_graph():
-    """编译固定边；四路 Analyst 均指向 Writer，由 LangGraph 汇合后再写报告。"""
+    """编译固定边；四路 Analyst 经 list barrier 汇合后再进 Writer。"""
     g = StateGraph(ResearchState)
     g.add_node("coordinator", coordinator_node)
     g.add_node("quote_analyst", quote_analyst_node)
@@ -61,10 +61,11 @@ def _build_graph():
             "writer",
         ],
     )
-    g.add_edge("quote_analyst", "writer")
-    g.add_edge("market_analyst", "writer")
-    g.add_edge("news_analyst", "writer")
-    g.add_edge("finance_analyst", "writer")
+    # 显式 barrier：等四路全部完成再调度 Writer（无标的仍走 conditional → writer）
+    g.add_edge(
+        ["quote_analyst", "market_analyst", "news_analyst", "finance_analyst"],
+        "writer",
+    )
     g.add_edge("writer", "mailer")
     g.add_edge("mailer", END)
     return g.compile()
