@@ -148,12 +148,13 @@ def fetch_tencent_kline(
     raise RuntimeError(f"tencent kline failed code={code}: {last_err}")
 
 
-def fetch_tencent_news(*, code: str, limit: int = 10, news_type: int = 1) -> list[dict[str, Any]]:
-    """腾讯个股资讯 search 接口。"""
+def fetch_tencent_news(*, code: str, limit: int = 6, news_type: int = 1) -> list[dict[str, Any]]:
+    """腾讯个股资讯 search 接口（默认最多 6 条）。"""
     pref = prefixed(code)
+    n = max(1, min(int(limit), 6))
     url = (
         "https://web.ifzq.gtimg.cn/appstock/news/info/search"
-        f"?page=1&symbol={pref}&n={max(1, min(limit, 30))}&type={news_type}"
+        f"?page=1&symbol={pref}&n={n}&type={news_type}"
     )
     last_err: Exception | None = None
     for attempt in range(3):
@@ -167,15 +168,18 @@ def fetch_tencent_news(*, code: str, limit: int = 10, news_type: int = 1) -> lis
             if not isinstance(items, list):
                 return []
             out: list[dict[str, Any]] = []
-            for it in items[:limit]:
+            for it in items[:n]:
                 if not isinstance(it, dict):
                     continue
+                raw_url = _str(it.get("url")) or ""
+                if raw_url.startswith("//"):
+                    raw_url = "https:" + raw_url
                 out.append(
                     {
                         "title": _str(it.get("title")) or "",
                         "time": _str(it.get("time") or it.get("create_time")) or "",
                         "summary": _str(it.get("summary")) or "",
-                        "url": _str(it.get("url")) or "",
+                        "url": raw_url,
                         "source": _str(it.get("src") or it.get("typeStr")) or "腾讯财经",
                         "symbol": pref,
                     }

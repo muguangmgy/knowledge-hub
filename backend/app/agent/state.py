@@ -7,7 +7,7 @@ from typing import Annotated, Any, TypedDict
 class ResearchState(TypedDict, total=False):
     """投研 LangGraph 共享状态。
 
-    errors 用 Annotated[..., operator.add]，以便三路 Analyst 并行时错误列表可合并。
+    errors 用 Annotated[..., operator.add]，以便多路 Analyst 并行时错误列表可合并。
     """
 
     # 用户本轮原话（不带闲聊历史）
@@ -24,6 +24,8 @@ class ResearchState(TypedDict, total=False):
     market_data: dict[str, Any] | None
     # NewsAnalyst：腾讯个股资讯列表
     news: list[dict[str, Any]] | None
+    # FinanceAnalyst：AKShare 最近若干报告期关键财务指标
+    finance_data: dict[str, Any] | None
     # Writer 产出的 Markdown 报告；Mailer 可在文末追加投递说明（不进 PDF）
     report_md: str
     # 非致命错误列表（并行 Analyst 可能同时 append，须用 operator.add 合并）

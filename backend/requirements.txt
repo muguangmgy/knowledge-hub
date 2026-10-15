@@ -31,3 +31,5 @@ langgraph==0.6.11
 requests==2.34.2
 redis==6.4.0
 markdown==3.9
+# 财务要点：AKShare → 东方财富财务指标（免 Key）
+akshare==1.19.1

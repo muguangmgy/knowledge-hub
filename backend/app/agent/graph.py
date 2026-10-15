@@ -8,6 +8,7 @@ from typing import Any, Literal
 from langgraph.graph import END, START, StateGraph
 
 from app.agent.agents.coordinator import coordinator_node
+from app.agent.agents.finance_analyst import finance_analyst_node
 from app.agent.agents.mailer import mailer_node
 from app.agent.agents.market_analyst import market_analyst_node
 from app.agent.agents.news_analyst import news_analyst_node
@@ -21,23 +22,30 @@ logger = logging.getLogger(__name__)
 
 _compiled = None
 
-_Analyst = Literal["quote_analyst", "market_analyst", "news_analyst", "writer"]
+_Analyst = Literal[
+    "quote_analyst",
+    "market_analyst",
+    "news_analyst",
+    "finance_analyst",
+    "writer",
+]
 
 
 def _route_after_coordinator(state: ResearchState) -> list[_Analyst]:
-    """有标的扇出三路 Analyst；无标的短路到 Writer。"""
+    """有标的扇出四路 Analyst；无标的短路到 Writer。"""
     if state.get("skip_analysts"):
         return ["writer"]
-    return ["quote_analyst", "market_analyst", "news_analyst"]
+    return ["quote_analyst", "market_analyst", "news_analyst", "finance_analyst"]
 
 
 def _build_graph():
-    """编译固定边；三路 Analyst 均指向 Writer，由 LangGraph 汇合后再写报告。"""
+    """编译固定边；四路 Analyst 均指向 Writer，由 LangGraph 汇合后再写报告。"""
     g = StateGraph(ResearchState)
     g.add_node("coordinator", coordinator_node)
     g.add_node("quote_analyst", quote_analyst_node)
     g.add_node("market_analyst", market_analyst_node)
     g.add_node("news_analyst", news_analyst_node)
+    g.add_node("finance_analyst", finance_analyst_node)
     g.add_node("writer", writer_node)
     g.add_node("mailer", mailer_node)
 
@@ -45,11 +53,18 @@ def _build_graph():
     g.add_conditional_edges(
         "coordinator",
         _route_after_coordinator,
-        ["quote_analyst", "market_analyst", "news_analyst", "writer"],
+        [
+            "quote_analyst",
+            "market_analyst",
+            "news_analyst",
+            "finance_analyst",
+            "writer",
+        ],
     )
     g.add_edge("quote_analyst", "writer")
     g.add_edge("market_analyst", "writer")
     g.add_edge("news_analyst", "writer")
+    g.add_edge("finance_analyst", "writer")
     g.add_edge("writer", "mailer")
     g.add_edge("mailer", END)
     return g.compile()
@@ -75,6 +90,7 @@ def run_research_graph(user_input: str) -> dict[str, Any]:
         "quote_data": None,
         "market_data": None,
         "news": None,
+        "finance_data": None,
         "report_md": "",
         "errors": [],
         "timed_out": False,

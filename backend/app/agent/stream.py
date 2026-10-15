@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeou
 from typing import Any
 
 from app.agent.agents.coordinator import coordinator_node
+from app.agent.agents.finance_analyst import finance_analyst_node
 from app.agent.agents.mailer import mailer_node
 from app.agent.agents.market_analyst import market_analyst_node
 from app.agent.agents.news_analyst import news_analyst_node
@@ -24,6 +25,7 @@ _STAGE_MSG = {
     "quote": "正在拉取行情…",
     "market": "正在分析走势…",
     "news": "正在整理资讯…",
+    "finance": "正在整理财务要点…",
     "writer": "正在撰写报告…",
     "mailer": "正在处理邮件投递…",
 }
@@ -51,6 +53,7 @@ def iter_research_stream(
         "quote_data": None,
         "market_data": None,
         "news": None,
+        "finance_data": None,
         "report_md": "",
         "errors": [],
         "timed_out": False,
@@ -100,7 +103,7 @@ def iter_research_stream(
         yield {"event": "cancelled"}
         return
 
-    hardcoded, _messages, _table = prepare_writer(state)
+    hardcoded, _messages, _table, _news, _fin = prepare_writer(state)
     body_parts: list[str] = []
     for chunk in iter_writer_deltas(state):
         if should_cancel():
@@ -199,13 +202,14 @@ def _run_analysts_parallel(
     state: dict[str, Any],
     should_cancel: Callable[[], bool],
 ) -> Iterator[dict[str, Any]]:
-    """并行跑 quote/market/news；每路完成推对应 stage，空闲时 ping。"""
+    """并行跑 quote/market/news/finance；每路完成推对应 stage，空闲时 ping。"""
     jobs = {
         "quote": quote_analyst_node,
         "market": market_analyst_node,
         "news": news_analyst_node,
+        "finance": finance_analyst_node,
     }
-    with ThreadPoolExecutor(max_workers=3) as ex:
+    with ThreadPoolExecutor(max_workers=4) as ex:
         futs = {name: ex.submit(fn, state) for name, fn in jobs.items()}
         pending = set(futs.keys())
         while pending:
