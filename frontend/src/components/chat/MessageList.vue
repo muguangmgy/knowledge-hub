@@ -250,14 +250,24 @@ watch(
   background: var(--bg-subtle);
   font-weight: 600;
   color: var(--text-secondary);
-  text-align: left;
 }
 
 .md-body :deep(th),
 .md-body :deep(td) {
   border: 1px solid var(--border);
   padding: 8px 10px;
-  vertical-align: top;
+  vertical-align: middle;
+  text-align: center;
+}
+
+.md-body :deep(th[align='left']),
+.md-body :deep(td[align='left']) {
+  text-align: left;
+}
+
+.md-body :deep(th[align='right']),
+.md-body :deep(td[align='right']) {
+  text-align: right;
 }
 
 .md-body :deep(tbody tr:nth-child(even)) {

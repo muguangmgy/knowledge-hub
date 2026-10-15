@@ -1,54 +1,62 @@
 <template>
-  <div class="page fade-up">
-    <div class="card panel">
-      <div class="head">
-        <div>
-          <h1>文档管理</h1>
-          <p class="sub">上传后即可在对话中检索引用</p>
-        </div>
+  <div class="page admin-page fade-up">
+    <el-card shadow="never" class="panel">
+      <div class="toolbar">
+        <el-button type="primary" @click="uploadVisible = true">上传文档</el-button>
         <el-button @click="refresh" :loading="docStore.loading">刷新</el-button>
       </div>
-      <UploadPanel @uploaded="refresh" />
       <div class="table-wrap">
         <el-table
           :data="docStore.items"
           v-loading="docStore.loading"
           empty-text="暂无文档"
-          class="doc-table"
+          stripe
+          border
+          height="100%"
+          class="doc-table fill-table"
         >
-          <el-table-column prop="id" label="ID" width="72" />
-          <el-table-column prop="title" label="标题" min-width="160" show-overflow-tooltip />
-          <el-table-column prop="filename" label="文件名" min-width="180" show-overflow-tooltip />
-          <el-table-column label="类型" width="100">
+          <el-table-column prop="title" label="标题" min-width="160" align="center" show-overflow-tooltip />
+          <el-table-column prop="filename" label="文件名" min-width="180" align="center" show-overflow-tooltip />
+          <el-table-column label="类型" width="100" align="center">
             <template #default="{ row }">
-              <span class="type-tag">{{ (row.fileType || '—').toUpperCase() }}</span>
+              <el-tag size="small" type="info">{{ (row.fileType || '—').toUpperCase() }}</el-tag>
             </template>
           </el-table-column>
-          <el-table-column label="大小" width="110">
+          <el-table-column label="大小" width="110" align="center">
             <template #default="{ row }">
               {{ formatBytes(row.sizeBytes) }}
             </template>
           </el-table-column>
-          <el-table-column prop="createdAt" label="创建时间" min-width="168" />
-          <el-table-column label="操作" width="88" fixed="right">
+          <el-table-column prop="createdAt" label="创建时间" min-width="168" align="center" />
+          <el-table-column label="操作" width="88" fixed="right" align="center">
             <template #default="{ row }">
               <el-button link type="danger" @click="onDelete(row)">删除</el-button>
             </template>
           </el-table-column>
         </el-table>
       </div>
-    </div>
+    </el-card>
+
+    <el-dialog
+      v-model="uploadVisible"
+      title="上传文档"
+      width="520px"
+      destroy-on-close
+    >
+      <UploadPanel @uploaded="onUploaded" />
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
-/** 文档列表：上传面板 + 刷新/物理删除。 */
-import { onMounted } from 'vue'
+/** 文档列表：上传走弹窗；刷新/物理删除。 */
+import { onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import UploadPanel from '../../components/ingest/UploadPanel.vue'
 import { useDocumentStore } from '../../stores/document'
 
 const docStore = useDocumentStore()
+const uploadVisible = ref(false)
 
 /** 字节数格式化为可读大小。 */
 function formatBytes(n) {
@@ -66,6 +74,12 @@ async function refresh() {
   } catch (err) {
     ElMessage.error(err?.message || '加载文档失败')
   }
+}
+
+/** 入库成功：关弹窗并刷新列表。 */
+async function onUploaded() {
+  uploadVisible.value = false
+  await refresh()
 }
 
 /** 确认后物理删除文档。 */
@@ -87,61 +101,37 @@ onMounted(refresh)
 
 <style scoped>
 .panel {
-  padding: 22px 24px 20px;
-}
-
-.head {
+  flex: 1;
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 18px;
+  flex-direction: column;
+  min-height: 0;
+  border: none;
 }
 
-h1 {
-  margin: 0;
-  font-size: 20px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
+.panel :deep(.el-card__body) {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 16px 20px;
 }
 
-.sub {
-  margin: 4px 0 0;
-  font-size: 13px;
-  color: var(--muted);
+.toolbar {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
 }
 
 .table-wrap {
-  margin-top: 18px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  overflow: hidden;
-}
-
-.type-tag {
-  display: inline-block;
-  padding: 2px 8px;
-  border-radius: 4px;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.03em;
-  color: var(--accent);
-  background: var(--accent-soft);
-  border: 1px solid var(--accent-border);
+  flex: 1;
+  min-height: 0;
 }
 
 .doc-table {
   width: 100%;
 }
 
-:deep(.el-table) {
-  --el-table-header-bg-color: var(--bg-subtle);
-  --el-table-row-hover-bg-color: #f3f6f8;
-  font-size: 13px;
-}
-
-:deep(.el-table th.el-table__cell) {
-  font-weight: 600;
-  color: var(--text-secondary);
+.fill-table {
+  flex: 1;
 }
 </style>

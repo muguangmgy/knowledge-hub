@@ -1,71 +1,86 @@
 <template>
-  <div class="chat-page fade-up">
-    <aside class="sidebar">
-      <div class="side-head">
-        <strong>会话</strong>
-        <el-button type="primary" plain size="small" @click="onNew">新对话</el-button>
-      </div>
-      <div class="conv-list">
-        <div
-          v-for="c in store.conversations"
-          :key="c.id"
-          class="conv"
-          :class="{
-            active: c.id === store.conversationId,
-            'menu-open': openMenuId === c.id,
-          }"
-          @click="onOpen(c.id)"
-        >
-          <div class="conv-body">
-            <div class="title">{{ c.title || `会话 #${c.id}` }}</div>
-          </div>
-          <el-dropdown
-            trigger="click"
-            placement="bottom-start"
-            :teleported="true"
-            :popper-options="convMenuPopperOptions"
-            popper-class="conv-menu-popper"
-            @command="(cmd) => onConvCommand(cmd, c)"
-            @visible-change="(v) => onMenuVisible(v, c.id)"
-          >
-            <button type="button" class="more-btn" title="更多" @click.stop>
-              <el-icon :size="14"><MoreFilled /></el-icon>
+  <div class="page chat-wrap fade-up">
+    <el-card
+      shadow="never"
+      class="chat-panel"
+      :body-style="{
+        padding: '0',
+        height: '100%',
+        display: 'flex',
+        flexDirection: 'column',
+        minHeight: '0',
+      }"
+    >
+      <div class="chat-page">
+        <aside class="sidebar">
+          <div class="side-head">
+            <button type="button" class="new-chat-btn" @click="onNew">
+              开启新对话
             </button>
-            <template #dropdown>
-              <el-dropdown-menu>
-                <el-dropdown-item command="rename">
-                  <el-icon><EditPen /></el-icon>
-                  <span>重命名</span>
-                </el-dropdown-item>
-                <el-dropdown-item command="delete" class="conv-menu-danger">
-                  <el-icon><Delete /></el-icon>
-                  <span>删除</span>
-                </el-dropdown-item>
-              </el-dropdown-menu>
+          </div>
+          <div class="conv-list">
+            <div
+              v-for="c in store.conversations"
+              :key="c.id"
+              class="conv"
+              :class="{
+                active: c.id === store.conversationId,
+                'menu-open': openMenuId === c.id,
+              }"
+              @click="onOpen(c.id)"
+            >
+              <div class="conv-body">
+                <div class="title">{{ c.title || `会话 #${c.id}` }}</div>
+              </div>
+              <el-dropdown
+                trigger="click"
+                placement="bottom-start"
+                :teleported="true"
+                :popper-options="convMenuPopperOptions"
+                popper-class="conv-menu-popper"
+                @command="(cmd) => onConvCommand(cmd, c)"
+                @visible-change="(v) => onMenuVisible(v, c.id)"
+              >
+                <button type="button" class="more-btn" title="更多" @click.stop>
+                  <el-icon :size="14"><MoreFilled /></el-icon>
+                </button>
+                <template #dropdown>
+                  <el-dropdown-menu>
+                    <el-dropdown-item command="rename">
+                      <el-icon><EditPen /></el-icon>
+                      <span>重命名</span>
+                    </el-dropdown-item>
+                    <el-dropdown-item command="delete" class="conv-menu-danger">
+                      <el-icon><Delete /></el-icon>
+                      <span>删除</span>
+                    </el-dropdown-item>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
+            </div>
+            <div v-if="!store.conversations.length" class="empty">暂无历史会话</div>
+          </div>
+        </aside>
+        <section class="main">
+          <MessageList
+            :messages="store.messages"
+            :empty-title="emptyTitle"
+            :empty-hint="emptyHint"
+          >
+            <template #assistant-extra="slotProps">
+              <slot name="assistant-extra" v-bind="slotProps" />
             </template>
-          </el-dropdown>
-        </div>
-        <div v-if="!store.conversations.length" class="empty">暂无历史会话</div>
+          </MessageList>
+          <ChatInput
+            :asking="store.asking"
+            :stage-message="store.stageMessage || ''"
+            :placeholder="inputPlaceholder"
+            @send="onSend"
+            @stop="onStop"
+          />
+        </section>
       </div>
-    </aside>
-    <section class="main">
-      <MessageList
-        :messages="store.messages"
-        :empty-title="emptyTitle"
-        :empty-hint="emptyHint"
-      >
-        <template #assistant-extra="slotProps">
-          <slot name="assistant-extra" v-bind="slotProps" />
-        </template>
-      </MessageList>
-      <ChatInput
-        :asking="store.asking"
-        :stage-message="store.stageMessage || ''"
-        :placeholder="inputPlaceholder"
-        @send="onSend"
-        @stop="onStop"
-      />
-    </section>
+    </el-card>
   </div>
 </template>
 
@@ -194,12 +209,37 @@ onMounted(refreshList)
 </script>
 
 <style scoped>
+.chat-wrap {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+  box-sizing: border-box;
+}
+
+.chat-panel {
+  flex: 1;
+  min-height: 0;
+  border: none;
+  display: flex;
+  flex-direction: column;
+}
+
+.chat-panel :deep(.el-card__body) {
+  flex: 1;
+  min-height: 0;
+}
+
 .chat-page {
   display: grid;
   grid-template-columns: 268px 1fr;
   gap: 0;
-  height: calc(100vh - var(--topbar-h));
-  background: var(--bg);
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+  width: 100%;
+  background: var(--surface);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
 }
 
 .sidebar {
@@ -219,19 +259,37 @@ onMounted(refreshList)
 }
 
 .side-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 14px 16px;
+  padding: 12px 12px 10px;
   border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
 }
 
-.side-head strong {
-  font-size: 13px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  color: var(--text-secondary);
-  text-transform: none;
+.new-chat-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 40px;
+  margin: 0;
+  padding: 0 16px;
+  border: none;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.new-chat-btn:hover {
+  background: var(--accent-hover);
+}
+
+.new-chat-btn:active {
+  background: var(--accent-hover);
+  opacity: 0.92;
 }
 
 .conv-list {
@@ -268,7 +326,7 @@ onMounted(refreshList)
 
 .conv .title {
   font-size: 13px;
-  font-weight: 500;
+  font-weight: 400;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -318,7 +376,7 @@ onMounted(refreshList)
   .chat-page {
     grid-template-columns: 1fr;
     height: auto;
-    min-height: calc(100vh - var(--topbar-h));
+    min-height: 480px;
   }
 
   .sidebar {

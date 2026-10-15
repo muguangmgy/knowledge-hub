@@ -24,7 +24,7 @@ export const useUserStore = defineStore('user', {
     async register(form) {
       await authApi.register(form)
     },
-    /** 拉取当前用户资料。 */
+    /** 拉取当前用户资料（含 roles + menus 树，供侧栏）。 */
     async loadMe() {
       if (!this.token) {
         this.profile = null

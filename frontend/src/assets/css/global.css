@@ -23,6 +23,8 @@
   --shadow: 0 1px 3px rgb(26 35 50 / 6%), 0 4px 16px rgb(26 35 50 / 4%);
   --font: "IBM Plex Sans", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
   --topbar-h: 56px;
+  --sidebar-w: 220px;
+  --sidebar-collapsed-w: 64px;
   --el-color-primary: #0f766e;
   --el-color-primary-light-3: #3d9a93;
   --el-color-primary-light-5: #6bb3ad;
@@ -54,10 +56,21 @@ a {
   text-decoration: none;
 }
 
+/* 侧栏布局下内容区铺满；登录页仍用 .auth-wrap */
 .page {
-  max-width: 1120px;
-  margin: 0 auto;
-  padding: 24px;
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: 16px 20px 20px;
+  box-sizing: border-box;
+}
+
+.page.admin-page,
+.page.chat-wrap {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+  padding: 12px 16px 16px;
 }
 
 .card {
@@ -97,4 +110,40 @@ a {
 
 .fade-up {
   animation: fade-up 0.28s ease-out;
+}
+
+/* 侧栏折叠后，系统管理等子菜单浮层（teleport 到 body，需全局样式） */
+.el-menu--popup,
+.sider-menu-popup.el-menu--popup,
+.sider-menu-popup .el-menu--popup {
+  min-width: 136px !important;
+  width: max-content !important;
+  max-width: 200px;
+  padding: 4px !important;
+  border-radius: var(--radius-sm) !important;
+  box-shadow: var(--shadow) !important;
+}
+
+.el-menu--popup .el-menu-item,
+.sider-menu-popup .el-menu-item {
+  height: 34px !important;
+  line-height: 34px !important;
+  padding: 0 10px !important;
+  margin: 0 !important;
+  font-size: 13px !important;
+  border-radius: var(--radius-sm) !important;
+}
+
+.el-menu--popup .el-menu-item .el-icon,
+.sider-menu-popup .el-menu-item .el-icon {
+  width: 15px;
+  font-size: 14px;
+  margin-right: 6px;
+}
+
+.el-menu--popup .el-menu-item.is-active,
+.sider-menu-popup .el-menu-item.is-active {
+  background: var(--accent-soft) !important;
+  color: var(--accent) !important;
+  font-weight: 600;
 }

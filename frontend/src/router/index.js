@@ -1,4 +1,4 @@
-/** 路由：公开页 login/register；其余需 Token，否则跳登录。 */
+/** 路由：公开页 login/register；其余需 Token，业务+系统管理挂 AppLayout。 */
 import { createRouter, createWebHistory } from 'vue-router'
 import { getToken } from '../api/http'
 
@@ -17,26 +17,44 @@ const routes = [
   },
   {
     path: '/',
-    redirect: '/chat/rag',
-  },
-  {
-    path: '/documents',
-    name: 'documents',
-    component: () => import('../views/documents/DocumentListView.vue'),
-  },
-  {
-    path: '/chat',
-    redirect: '/chat/rag',
-  },
-  {
-    path: '/chat/rag',
-    name: 'chat-rag',
-    component: () => import('../views/chat/ChatView.vue'),
-  },
-  {
-    path: '/chat/direct',
-    name: 'chat-direct',
-    component: () => import('../views/chat/DirectChatView.vue'),
+    component: () => import('../layouts/AppLayout.vue'),
+    children: [
+      { path: '', redirect: '/chat/rag' },
+      {
+        path: 'chat',
+        redirect: '/chat/rag',
+      },
+      {
+        path: 'chat/rag',
+        name: 'chat-rag',
+        component: () => import('../views/chat/ChatView.vue'),
+      },
+      {
+        path: 'chat/direct',
+        name: 'chat-direct',
+        component: () => import('../views/chat/DirectChatView.vue'),
+      },
+      {
+        path: 'documents',
+        name: 'documents',
+        component: () => import('../views/documents/DocumentListView.vue'),
+      },
+      {
+        path: 'system/users',
+        name: 'system-users',
+        component: () => import('../views/system/UserManageView.vue'),
+      },
+      {
+        path: 'system/roles',
+        name: 'system-roles',
+        component: () => import('../views/system/RoleManageView.vue'),
+      },
+      {
+        path: 'system/menus',
+        name: 'system-menus',
+        component: () => import('../views/system/MenuManageView.vue'),
+      },
+    ],
   },
 ]
 
