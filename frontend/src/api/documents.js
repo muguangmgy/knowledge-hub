@@ -1,4 +1,4 @@
-/** 文档 API：列表 / 删除 / 上传（入库 timeout 10min）。 */
+/** 文档 API：列表 / 删除 / 上传 / 重新解析（入库 timeout 10min）。 */
 import http from './http'
 
 /** GET /api/documents */
@@ -19,5 +19,19 @@ export function uploadDocument(file, onUploadProgress) {
     timeout: 600000,
     headers: { 'Content-Type': 'multipart/form-data' },
     onUploadProgress,
+  })
+}
+
+/** POST /api/documents/:id/reingest — 用服务器原文件按最新规则重建索引 */
+export function reingestDocument(id) {
+  return http.post(`/api/documents/${id}/reingest`, null, {
+    timeout: 600000,
+  })
+}
+
+/** POST /api/documents/reingest-all — 批量重新解析 */
+export function reingestAllDocuments() {
+  return http.post('/api/documents/reingest-all', null, {
+    timeout: 600000,
   })
 }

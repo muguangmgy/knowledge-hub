@@ -21,6 +21,19 @@ class TextChunk:
     content: str
 
 
+def text_for_embedding(heading_path: str, content: str) -> str:
+    """向量化用文本：有实质标题时拼在正文前，提升按章节提问的召回。
+
+    Chroma document / MySQL content 仍存纯正文；仅 Embedding 输入带标题。
+    heading_path 为「正文」或空时不拼接，避免无信息噪声。
+    """
+    path = (heading_path or "").strip()
+    body = (content or "").strip()
+    if path and path != "正文" and body:
+        return f"{path}\n{body}"
+    return body or path
+
+
 def chunk_text(
     text: str,
     *,

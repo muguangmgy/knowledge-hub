@@ -42,6 +42,25 @@ async def upload_document(
     return ok(doc)
 
 
+@router.post("/reingest-all")
+def reingest_all_documents(
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    """用磁盘原文件按最新规则批量重建索引（长耗时）。"""
+    return ok(ingest_service.reingest_all_documents(db))
+
+
+@router.post("/{document_id}/reingest")
+def reingest_document(
+    document_id: int,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    """用磁盘原文件按最新规则重建单文档索引（长耗时）。"""
+    return ok(ingest_service.reingest_document(db, document_id))
+
+
 @router.delete("/{document_id}")
 def delete_document(
     document_id: int,

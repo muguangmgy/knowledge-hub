@@ -4,6 +4,13 @@
       <div class="toolbar">
         <el-button type="primary" @click="uploadVisible = true">上传文档</el-button>
         <el-button @click="refresh" :loading="docStore.loading">刷新</el-button>
+        <el-button
+          @click="onReingestAll"
+          :loading="docStore.reingesting"
+          :disabled="!docStore.items.length"
+        >
+          全部重新解析
+        </el-button>
       </div>
       <div class="table-wrap">
         <el-table
@@ -28,9 +35,20 @@
             </template>
           </el-table-column>
           <el-table-column prop="createdAt" label="创建时间" min-width="168" align="center" />
-          <el-table-column label="操作" width="88" fixed="right" align="center">
+          <el-table-column label="操作" width="168" fixed="right" align="center">
             <template #default="{ row }">
-              <el-button link type="danger" @click="onDelete(row)">删除</el-button>
+              <el-button
+                link
+                type="primary"
+                :disabled="docStore.reingesting || reingestRowId === row.id"
+                :loading="reingestRowId === row.id"
+                @click="onReingest(row)"
+              >
+                重新解析
+              </el-button>
+              <el-button link type="danger" :disabled="docStore.reingesting" @click="onDelete(row)">
+                删除
+              </el-button>
             </template>
           </el-table-column>
         </el-table>
@@ -57,6 +75,7 @@ import { useDocumentStore } from '../../stores/document'
 
 const docStore = useDocumentStore()
 const uploadVisible = ref(false)
+const reingestRowId = ref(null)
 
 /** 字节数格式化为可读大小。 */
 function formatBytes(n) {
@@ -93,6 +112,46 @@ async function onDelete(row) {
   } catch (err) {
     if (err === 'cancel' || err === 'close') return
     ElMessage.error(err?.message || '删除失败')
+  }
+}
+
+/** 用服务器已存文件按最新规则原地重建索引（保留文档 id 与原文件）。 */
+async function onReingest(row) {
+  try {
+    await ElMessageBox.confirm(
+      `确认重新解析「${row.filename}」？将按当前切分规则重建索引，保留原文件。`,
+      '重新解析',
+      { type: 'warning' },
+    )
+    reingestRowId.value = row.id
+    await docStore.reingest(row.id)
+    ElMessage.success('重新解析完成')
+  } catch (err) {
+    if (err === 'cancel' || err === 'close') return
+    ElMessage.error(err?.message || '重新解析失败')
+  } finally {
+    reingestRowId.value = null
+  }
+}
+
+/** 批量重新解析当前库全部文档。 */
+async function onReingestAll() {
+  try {
+    await ElMessageBox.confirm(
+      `确认重新解析全部 ${docStore.items.length} 个文档？将按当前规则重建索引，耗时可能较长。`,
+      '全部重新解析',
+      { type: 'warning' },
+    )
+    const summary = await docStore.reingestAll()
+    const failed = Number(summary.failed || 0)
+    if (failed > 0) {
+      ElMessage.warning(`完成：成功 ${summary.ok || 0}，失败 ${failed}`)
+    } else {
+      ElMessage.success(`全部重新解析完成（${summary.ok || 0}）`)
+    }
+  } catch (err) {
+    if (err === 'cancel' || err === 'close') return
+    ElMessage.error(err?.message || '全部重新解析失败')
   }
 }
 

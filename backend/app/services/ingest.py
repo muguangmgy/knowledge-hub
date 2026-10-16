@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from app.common.config import get_settings
 from app.common.errors import AppError, ErrorCode
 from app.common.logging_util import event_msg
-from app.ingest.chunker import chunk_text
+from app.ingest.chunker import chunk_text, text_for_embedding
 from app.ingest.parser import detect_file_type, parse_bytes
 from app.models.chunk import Chunk
 from app.models.document import Document
@@ -64,7 +64,10 @@ def ingest_upload(db: Session, *, filename: str, data: bytes) -> dict:
         raise AppError(ErrorCode.INGEST_FAILED, "未能提取有效文本", http_status=500)
 
     # 耗时长的 Embedding 放在落库之前，失败时通常无库行
-    embeddings = embed_texts([p.content for p in pieces])
+    # 向量输入带 heading_path；Chroma document 仍写纯 content（见下方 upsert）
+    embeddings = embed_texts(
+        [text_for_embedding(p.heading_path, p.content) for p in pieces]
+    )
 
     title = Path(safe_name).stem
     document: Document | None = None
@@ -212,6 +215,168 @@ def delete_document(db: Session, document_id: int) -> None:
             chunks=len(chroma_ids),
         )
     )
+
+
+def reingest_document(db: Session, document_id: int) -> dict:
+    """用磁盘原文件按当前解析/切分规则原地重建索引。
+
+    保留 document 行与原文件；先算完 Embedding，再替换 chunk / Chroma / BM25。
+    """
+    settings = get_settings()
+    doc = db.get(Document, document_id)
+    if doc is None:
+        raise AppError(ErrorCode.NOT_FOUND, "文档不存在", http_status=404)
+
+    abs_path = settings.kb_dir / doc.file_path
+    if not abs_path.is_file():
+        raise AppError(
+            ErrorCode.INGEST_FAILED,
+            "原文件不存在，无法重新解析",
+            http_status=500,
+        )
+
+    data = abs_path.read_bytes()
+    if not data:
+        raise AppError(ErrorCode.INGEST_FAILED, "原文件为空，无法重新解析", http_status=500)
+
+    file_type = detect_file_type(doc.filename)
+    text = parse_bytes(file_type, data).strip()
+    if not text:
+        raise AppError(ErrorCode.INGEST_FAILED, "未能提取有效文本", http_status=500)
+
+    pieces = chunk_text(text)
+    if not pieces:
+        raise AppError(ErrorCode.INGEST_FAILED, "未能提取有效文本", http_status=500)
+
+    embeddings = embed_texts(
+        [text_for_embedding(p.heading_path, p.content) for p in pieces]
+    )
+
+    old_chunks = db.scalars(
+        select(Chunk).where(Chunk.document_id == document_id)
+    ).all()
+    old_chroma_ids = [c.chroma_id for c in old_chunks]
+
+    try:
+        chroma_store.delete_ids(old_chroma_ids)
+    except Exception as exc:
+        raise AppError(
+            ErrorCode.INTERNAL, f"Chroma 删除失败: {exc}", http_status=500
+        ) from exc
+
+    bm25_store.remove_ids(old_chroma_ids)
+
+    for c in old_chunks:
+        db.delete(c)
+    db.flush()
+
+    chroma_ids: list[str] = []
+    chunk_rows: list[Chunk] = []
+    metadatas: list[dict] = []
+    try:
+        for piece in pieces:
+            chroma_id = f"{doc.id}_{piece.chunk_index}"
+            chroma_ids.append(chroma_id)
+            row = Chunk(
+                document_id=doc.id,
+                chunk_index=piece.chunk_index,
+                heading_path=piece.heading_path,
+                content=piece.content,
+                chroma_id=chroma_id,
+            )
+            chunk_rows.append(row)
+            metadatas.append(
+                {
+                    "document_id": doc.id,
+                    "chunk_id": 0,
+                    "heading_path": piece.heading_path[:500],
+                    "filename": doc.filename,
+                }
+            )
+            db.add(row)
+
+        db.flush()
+        for i, row in enumerate(chunk_rows):
+            metadatas[i]["chunk_id"] = row.id
+
+        chroma_store.upsert_chunks(
+            ids=chroma_ids,
+            documents=[p.content for p in pieces],
+            embeddings=embeddings,
+            metadatas=metadatas,
+        )
+        bm25_store.upsert_chunks(
+            [
+                {
+                    "chroma_id": row.chroma_id,
+                    "document_id": row.document_id,
+                    "chunk_id": row.id,
+                    "filename": doc.filename,
+                    "title": doc.title,
+                    "heading_path": row.heading_path,
+                    "content": row.content,
+                }
+                for row in chunk_rows
+            ]
+        )
+        db.commit()
+        db.refresh(doc)
+    except AppError:
+        db.rollback()
+        raise
+    except Exception as exc:
+        db.rollback()
+        logger.warning(
+            event_msg(
+                "ingest.reingest_failed",
+                document_id=document_id,
+                filename=doc.filename,
+                err=exc,
+            )
+        )
+        raise AppError(
+            ErrorCode.INGEST_FAILED, f"重新解析失败: {exc}", http_status=500
+        ) from exc
+
+    logger.info(
+        event_msg(
+            "ingest.reingest_ok",
+            document_id=doc.id,
+            filename=doc.filename,
+            chunks=len(chunk_rows),
+        )
+    )
+    return _doc_to_dict(doc)
+
+
+def reingest_all_documents(db: Session) -> dict:
+    """按当前列表顺序逐个重新解析；单项失败记入 errors，不中断其余。"""
+    rows = db.scalars(select(Document).order_by(Document.id.asc())).all()
+    ids = [d.id for d in rows]
+    ok_items: list[dict] = []
+    errors: list[dict] = []
+    for doc_id in ids:
+        try:
+            ok_items.append(reingest_document(db, doc_id))
+        except AppError as exc:
+            errors.append({"documentId": doc_id, "message": exc.message})
+        except Exception as exc:
+            errors.append({"documentId": doc_id, "message": str(exc)})
+    logger.info(
+        event_msg(
+            "ingest.reingest_all_done",
+            total=len(ids),
+            ok=len(ok_items),
+            failed=len(errors),
+        )
+    )
+    return {
+        "total": len(ids),
+        "ok": len(ok_items),
+        "failed": len(errors),
+        "items": ok_items,
+        "errors": errors,
+    }
 
 
 def _cleanup_partial(
