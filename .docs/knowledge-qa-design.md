@@ -303,12 +303,14 @@ knowledge-hub/
 - **同步入库**：先在内存/临时区完成解析、切分、Embedding，**成功后再**写库 / 落盘 / 写 Chroma（见 §4.1）；失败清临时并回滚已写入部分 → `50001`
 - 解析后**无有效正文**（空文件、纯图 PDF、坏文件等）→ `50001`（不是 `42201`）
 - **删除**：见 §4.3（先 Chroma，失败整单失败）
+- **重新解析**：用 `KB_DIR` 原文件按当前解析/切分规则原地重建 chunk / Chroma / BM25（保留 `document.id` 与原文件）；单文档 `POST /api/documents/{id}/reingest`，全部 `POST /api/documents/reingest-all`（见 §4.5）
 
 ### 3.4 rag
 
 - Embedding（BGE-M3）+ Chroma 向量与 BM25 双路召回，RRF 融合（各路与融合条数读 `RAG_HYBRID_PATH_TOP_K`，默认 20）
+- **向量化输入**：有实质 `heading_path`（非空且非「正文」）时拼 `heading_path + "\n" + content`；Chroma `documents` / MySQL `chunk.content` 仍存纯正文
 - Rerank（BGE）取 `RAG_TOP_K`（默认 8），再按精排 **relevance_score** 做分数门控（见 §6.2）
-- BM25：进程内索引；启动 lifespan 从 MySQL 全量重建；入库/删除同步增删；分词 jieba + 英文小写
+- BM25：进程内索引；启动 lifespan 从 MySQL 全量重建；入库/删除/**重新解析**同步增删；分词 jieba + 英文小写；索引文本含 title / filename / heading_path / content
 - Collection **必须** `metadata={"hnsw:space": "cosine"}`（不用默认 `l2`；建后不可改，换空间须重建 collection）
 - `query` 返回的是 **distance**（越小越近）；正式拒答以精排分数为准，不用 distance 二次砍杀
 - `chroma_id`：`{document_id}_{chunk_index}`（删除文档时用）
@@ -391,6 +393,24 @@ lifespan：
 ```
 
 种子失败则**启动失败**（演示依赖可登录的 `admin`）。`/api/health`：MySQL 可达；Chroma 可打开。
+
+### 4.5 重新解析（原地重建索引）
+
+用于解析/切分规则升级后，让**已入库**文档吃到新逻辑，无需用户再选文件上传。
+
+```
+POST /api/documents/{id}/reingest 或 /reingest-all
+  → 读 KB_DIR/{document_id}/{filename}
+  → 解析 → 切分 → Embedding（同入库；失败则不动索引）
+  → 删旧 Chroma ids + BM25
+  → 替换 MySQL chunk 行
+  → 写新 Chroma + BM25 → commit
+  → 保留 document 行与原文件（id / filename 不变）
+```
+
+- 单文档失败 → `50001` / `40401` / Chroma 删失败 → `50000`（与删除语义一致）
+- 全部重新解析：按 id 升序逐个执行；单项失败记入 `errors`，不中断其余；返回 `total` / `ok` / `failed`
+- 前端文档列表提供「重新解析」「全部重新解析」（超时同入库 600s）
 
 ---
 
@@ -552,11 +572,22 @@ lifespan：
 
 ### 6.4 切片与解析边界
 
+切分算法四种格式共用（`chunk_text`）：先按 Markdown `#` 标题栈填 `heading_path`，再段内按字符滑窗。
+
 - **计量**：max / overlap 按 **字符** `len(text)`；建议 max≈**800**、overlap≈**100**
-- **有标题/大纲**：按标题层级切块，填写 `heading_path`
-- **无标题**（如部分 PDF）：`heading_path` 空或 `"正文"`；按段落累积，满约 800 字切一刀并 overlap
+- **有标题**：按标题层级切块，`heading_path` 如 `章 > 节`；无标题 → `"正文"`，按段落累积满约 800 字切一刀并 overlap
 - **类型**：仅 `pdf` / `docx` / `md` / `txt`；其它（含 `.doc`）→ `42201`
-- **无有效正文**（空文件、纯图 PDF、损坏等）：入库失败 → `50001`（扩展名合法时不用 `42201`）
+- **无有效正文**（空文件、纯图 PDF、损坏等）：入库失败 → `50001`（扩展名合法时不用 `42201`）；扫描件不做 OCR
+
+**解析如何得到标题（再进统一切分）**：
+
+| 格式 | 行为 |
+|------|------|
+| **md / txt** | 解码（UTF-8 → GBK → replace）；md 自带 `#` 原样保留；txt 无 `#` 则多为「正文」 |
+| **docx** | `Heading 1..6` / `标题 n` / `Title` 优先转为 `#`；否则短行 + 加粗或偏大字号启发式（≤40 字、无句末标点）→ `#`/`##`；表格摊成文本行 |
+| **pdf** | 有书签（`get_toc()`）→ 按页注入书签为 `#`…；无书签 → 按 `(y,x)` 阅读顺序 + 相对正文中位字号：≥2.0× 不当标题（姓名等），≥1.4× → `#`，≥1.15× 且已有一级节 → `##`（跨页保持一级节） |
+
+规则升级后旧文档须 **重新解析**（§4.5）才会更新 chunk / 向量。
 
 ### 6.5 多轮与双模式
 
@@ -641,7 +672,7 @@ lifespan：
 |------|----------|------|
 | 认证 | `/api/auth` | `POST /register`、`POST /login`、`GET /me`（roles + menus） |
 | 系统管理 | `/api/users`、`/api/roles`、`/api/menus` | 用户/角色/菜单 CRUD（见 [rbac-menu](./rbac-menu-design.md)） |
-| 文档 | `/api/documents` | 上传、列表、详情、**物理删除**（先 Chroma）；共享库：任意已登录用户可操作全库 |
+| 文档 | `/api/documents` | 上传、列表、详情、**物理删除**（先 Chroma）、**重新解析**（`POST /{id}/reingest`、`POST /reingest-all`）；共享库：任意已登录用户可操作全库 |
 | 会话 | `/api/conversations` | 列表 / 消息详情 / 删除；仅本人 |
 | 问答 | `/api/chat` | 同步整包；`conversationId` / `mode` 可选（缺省 `rag`）；缺省则懒建会话并返回 id；已有则校验归属与 mode；rag 检索范围 = 全库；direct 见 [stock-research](./stock-research-agent-design.md) |
 | 问答流式 | `/api/chat/stream` | SSE；请求体同 `/api/chat`；事件协议见 [chat-sse](./chat-sse-design.md)；UI 主路径 |
@@ -694,7 +725,8 @@ lifespan：
 - [x] 物理删除：先 Chroma（失败整单失败）再库/文件
 - [x] 问答为「混合检索→Rerank→生成/拒答」；rag 生成不带历史；direct 为投研 Multi-Agent（见 [stock-research](./stock-research-agent-design.md)）；检索用当前原文
 - [x] Chroma 最后写；失败简单回滚
-- [x] 切分按字符；无标题按段落滑窗；仅 pdf/docx/md/txt；无正文 → 50001
+- [x] 切分按字符；无标题按段落滑窗；仅 pdf/docx/md/txt；无正文 → 50001；pdf toc/字号启发式、docx 样式/启发式见 §6.4
+- [x] Embedding 输入可拼 heading_path；重新解析原地重建索引（§4.5）
 - [x] JWT + 注册/登录；RBAC 菜单五表（见 [rbac-menu](./rbac-menu-design.md)）；lifespan 幂等种子含 `admin`/`123456`；API 只验登录
 - [x] 会话归属；citations 只存 snippet
 - [x] 会话由 `/api/chat` 懒建；首条后响应带回 `conversationId`
@@ -711,7 +743,7 @@ lifespan：
 |----|------|
 | 用户/权限 | 注册+登录+JWT；RBAC 五表（user/role/menu/user_role/role_menu，见 [rbac-menu](./rbac-menu-design.md)）；lifespan 幂等种子（角色/菜单 + 用户 `admin`/`123456` 绑 admin）；注册绑 `user`；API 只验登录；侧栏按 menus；登出前端删 Token |
 | 入库 | 先解析/Embedding，成功后再写库/落盘；Chroma 最后写；失败回滚；同名→40901；无正文→50001；无 PROCESSING / 无僵尸清理 |
-| 解析/切分 | 字符窗 max≈800 / overlap≈100；有标题用 heading；无标题段落滑窗；仅 pdf/docx/md/txt |
+| 解析/切分 | 字符窗 max≈800 / overlap≈100；标题来源见 §6.4（md 原样；docx 样式+启发式；pdf toc 或字号层级）；统一 chunk_text；可重新解析 |
 | 长请求超时 | 入库 Axios 600s；问答 SSE + 同步 120s；Vite/Nginx SSE 去缓冲；前端长等待 / stage 文案 |
 | 文档库 | 全员共享；`document` 无 `user_id`、无 `status`；任意登录用户可列表/删/被检索 |
 | 删除 | 先 Chroma（失败整单失败）再 MySQL / 文件 |
