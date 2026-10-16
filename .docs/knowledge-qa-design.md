@@ -111,6 +111,7 @@ uv pip install -r requirements.txt
 | `INGEST_MAX_MB` | 上传硬上限（建议默认 **50**）；超过直接 `41301` |
 | `RAG_TOP_K` | 精排后最终给模型的片段条数，默认 **8** |
 | `RAG_HYBRID_PATH_TOP_K` | 向量 / BM25 各路召回与 RRF 融合条数，默认 **20** |
+| `RAG_RRF_BM25_WEIGHT` | RRF 中 BM25 路权重，默认 **1.0**（与向量等权；`>1` 更偏关键词） |
 | `RERANK_MODEL` / `RERANK_API_KEY` / `RERANK_BASE_URL` | 精排；KEY/URL 空则回落 Embedding；默认 `BAAI/bge-reranker-v2-m3` |
 | `RAG_RERANK_MIN_SCORE` | 精排软地板，默认 **0.05**（见 §6.2） |
 | `RAG_RERANK_RELATIVE_RATIO` | 精排相对落差：须 ≥ Top1×该比例，默认 **0.5** |

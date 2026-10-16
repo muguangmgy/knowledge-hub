@@ -126,6 +126,7 @@ knowledge-hub/
 | `EMBEDDING_*` | SiliconFlow 向量模型 |
 | `RAG_TOP_K` | 精排后最终给模型的片段条数，默认 8 |
 | `RAG_HYBRID_PATH_TOP_K` | 向量 / BM25 各路召回与 RRF 融合条数，默认 20 |
+| `RAG_RRF_BM25_WEIGHT` | RRF 中 BM25 路权重，默认 1.0（与向量等权；可试 1.2～1.5） |
 | `RAG_RERANK_MIN_SCORE` | 精排软地板，默认 0.05 |
 | `RAG_RERANK_RELATIVE_RATIO` | 精排相对落差（≥ Top1×比例），默认 0.5 |
 | `RAG_RERANK_KEEP_TOP1_FLOOR` | 滤空时 Top1 兜底地板，默认 0.15 |

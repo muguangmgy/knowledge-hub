@@ -50,6 +50,7 @@ class Settings(BaseSettings):
     INGEST_MAX_MB: int = 50  # 单文件上传上限（MB）
     RAG_TOP_K: int = 8  # 精排后最终给模型的片段条数
     RAG_HYBRID_PATH_TOP_K: int = 20  # 向量 / BM25 各路先召回多少条再 RRF 融合
+    RAG_RRF_BM25_WEIGHT: float = 1.0  # RRF 中 BM25 路权重；1.0=与向量等权，>1 更偏关键词
     RAG_RERANK_MIN_SCORE: float = 0.05  # 精排软地板：低于此分视为噪声（约 0~1）
     RAG_RERANK_RELATIVE_RATIO: float = 0.5  # 精排相对落差：须 ≥ Top1分数×该比例，否则丢掉
     RAG_RERANK_KEEP_TOP1_FLOOR: float = 0.15  # 滤完为空时，Top1≥此值则至少保留 Top1，避免短问误拒答

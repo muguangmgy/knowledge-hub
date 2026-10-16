@@ -140,11 +140,18 @@ def _rrf_fuse(
     *,
     final_k: int,
 ) -> list[RetrievedChunk]:
-    """Reciprocal Rank Fusion：两路按排名 reciprocal 求和后截断。
+    """Reciprocal Rank Fusion：两路按排名 reciprocal 加权求和后截断。
 
-    对每路第 rank 名（0-based）：贡献 1 / (RRF_K + rank + 1)。
+    对每路第 rank 名（0-based）：
+      向量贡献 1 / (RRF_K + rank + 1)
+      BM25 贡献 RAG_RRF_BM25_WEIGHT / (RRF_K + rank + 1)
     同分文档累加两路贡献；最终按合分降序取 final_k。
     """
+    settings = get_settings()
+    bm25_weight = float(settings.RAG_RRF_BM25_WEIGHT or 1.0)
+    if bm25_weight <= 0:
+        bm25_weight = 1.0
+
     scores: dict[str, float] = {}
     payload: dict[str, RetrievedChunk] = {}
 
@@ -156,7 +163,7 @@ def _rrf_fuse(
         vector_hits[0].distance if vector_hits else 0.35
     )
     for rank, hit in enumerate(bm25_hits):
-        scores[hit.chroma_id] = scores.get(hit.chroma_id, 0.0) + 1.0 / (
+        scores[hit.chroma_id] = scores.get(hit.chroma_id, 0.0) + bm25_weight / (
             _RRF_K + rank + 1
         )
         if hit.chroma_id not in payload:
