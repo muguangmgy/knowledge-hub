@@ -80,6 +80,9 @@ def delete_conversation(db: Session, user: User, conversation_id: int) -> None:
         db.delete(m)
     db.delete(conv)
     db.commit()
+    from app.agent.tools.research_context import delete_research_context
+
+    delete_research_context(conversation_id)
     logger.info(
         event_msg(
             "chat.conversation_delete_ok",
@@ -116,15 +119,15 @@ def ask(
     2. 懒建会话并写入 mode，或续聊时校验 mode 与会话一致（不一致不写消息）
     3. 落库 user 消息后按 mode 分支：
        - rag → _ask_rag（检索，生成不带历史）
-       - direct → _ask_direct（投研 Multi-Agent，不检索）
+       - direct → _ask_direct（投研三档路由，不检索）
     """
     settings = get_settings()
-    chat_mode, question, conv, _user_msg = _prepare_ask(
+    chat_mode, question, conv, user_msg = _prepare_ask(
         db, user, message=message, conversation_id=conversation_id, mode=mode
     )
 
     if chat_mode == "direct":
-        return _ask_direct(db, user, conv, question)
+        return _ask_direct(db, user, conv, question, user_msg)
 
     return _ask_rag(db, user, settings, conv, question)
 
@@ -171,7 +174,7 @@ def ask_stream(
     """
     cancel = should_cancel or (lambda: False)
     settings = get_settings()
-    chat_mode, question, conv, _user_msg = _prepare_ask(
+    chat_mode, question, conv, user_msg = _prepare_ask(
         db, user, message=message, conversation_id=conversation_id, mode=mode
     )
     # 流式：先 commit user，再推 meta（§6）
@@ -185,7 +188,7 @@ def ask_stream(
         return
 
     if chat_mode == "direct":
-        yield from _ask_direct_stream(db, user, conv, question, cancel)
+        yield from _ask_direct_stream(db, user, conv, question, user_msg, cancel)
         return
 
     yield from _ask_rag_stream(db, user, settings, conv, question, cancel)
@@ -236,22 +239,51 @@ def _prepare_ask(
     return chat_mode, question, conv, user_msg
 
 
+# 闲聊档带入模型的最近消息条数；轻投研与重投研不用这段历史
+_DIRECT_HISTORY_LIMIT = 6
+
+
+def _recent_direct_history(
+    db: Session, conversation_id: int, exclude_message_id: int
+) -> list[dict[str, str]]:
+    """本会话最近最多 6 条 user/assistant，排除本轮 user，按 id 升序。"""
+    rows = list(
+        db.scalars(
+            select(Message)
+            .where(Message.conversation_id == conversation_id)
+            .where(Message.id != exclude_message_id)
+            .where(Message.role.in_(("user", "assistant")))
+            .order_by(Message.id.desc())
+            .limit(_DIRECT_HISTORY_LIMIT)
+        ).all()
+    )
+    rows.reverse()
+    return [{"role": row.role, "content": row.content} for row in rows]
+
+
 def _ask_direct(
     db: Session,
     user: User,
     conv: Conversation,
     question: str,
+    user_msg: Message,
 ) -> dict:
-    """投研 Multi-Agent 分支（原 direct 闲聊已替换）。
+    """投研三档分支。
 
-    调用 run_research_graph；不检索、不带闲聊历史；rejected=false、citations=[]。
+    调用 run_research_graph，并传入会话 id 与最近 6 条（仅 chat 档使用）。
+    不检索；rejected=false、citations=[]。
     Writer LLM 等致命失败时保留 user 并写失败说明后抛出。
     """
     from app.agent import run_research_graph
 
+    history = _recent_direct_history(db, conv.id, user_msg.id)
     t0 = time.perf_counter()
     try:
-        result = run_research_graph(question)
+        result = run_research_graph(
+            question,
+            conversation_id=conv.id,
+            history_messages=history,
+        )
         answer = result["report_md"]
     except AppError:
         _commit_fail_assistant(db, conv)
@@ -271,6 +303,7 @@ def _ask_direct(
         event_msg(
             "chat.ask_ok",
             mode="direct",
+            route=result.get("route") or "-",
             user_id=user.id,
             conversation_id=conv.id,
             message_id=assistant.id,
@@ -293,18 +326,25 @@ def _ask_direct_stream(
     user: User,
     conv: Conversation,
     question: str,
+    user_msg: Message,
     cancel: Callable[[], bool],
 ) -> Iterator[dict[str, Any]]:
     """投研 SSE 分支：转发 iter_research_stream 的 stage/delta/ping。
 
     final → 落库 assistant 并转为 done；LLM 失败落库失败文案后 done（不抛）。
-    取消则 cancelled，不落库、不发信。
+    取消则 cancelled，不落库、不发信。历史仅 chat 档使用。
     """
     from app.agent.stream import iter_research_stream
 
+    history = _recent_direct_history(db, conv.id, user_msg.id)
     t0 = time.perf_counter()
     try:
-        for ev in iter_research_stream(question, should_cancel=cancel):
+        for ev in iter_research_stream(
+            question,
+            conversation_id=conv.id,
+            history_messages=history,
+            should_cancel=cancel,
+        ):
             et = ev.get("event")
             if et == "cancelled":
                 yield ev
@@ -320,6 +360,7 @@ def _ask_direct_stream(
                     event_msg(
                         "chat.ask_ok",
                         mode="direct",
+                        route=result.get("route") or "-",
                         user_id=user.id,
                         conversation_id=conv.id,
                         message_id=assistant.id,

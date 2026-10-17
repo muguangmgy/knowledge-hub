@@ -2,8 +2,8 @@
   <ChatWorkspace
     :store="directChatStore"
     empty-title="投研助手"
-    empty-hint="例：分析贵州茅台近日行情发到我邮箱"
-    input-placeholder="分析贵州茅台近日行情发到我邮箱"
+    empty-hint="可以问现价，也可以闲聊。例：分析贵州茅台近日行情发到我邮箱"
+    input-placeholder="可以问现价或闲聊；研报示例：分析贵州茅台近日行情发到我邮箱"
   />
 </template>
 

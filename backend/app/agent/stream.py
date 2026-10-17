@@ -1,3 +1,5 @@
+"""投研 SSE：按 route 增量推 stage/delta，只有重投研才进 Mailer。"""
+
 from __future__ import annotations
 
 import logging
@@ -6,13 +8,16 @@ from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from typing import Any
 
+from app.agent.agents.chat import iter_chat_deltas
 from app.agent.agents.coordinator import coordinator_node
 from app.agent.agents.finance_analyst import finance_analyst_node
+from app.agent.agents.light_answer import iter_light_deltas
+from app.agent.agents.lookup import lookup_node
 from app.agent.agents.mailer import mailer_node
 from app.agent.agents.market_analyst import market_analyst_node
 from app.agent.agents.news_analyst import news_analyst_node
 from app.agent.agents.quote_analyst import quote_analyst_node
-from app.agent.agents.writer import append_disclaimer, iter_writer_deltas, prepare_writer
+from app.agent.agents.writer import append_disclaimer, ensure_compare_note, iter_writer_deltas, prepare_writer
 from app.common.config import get_settings
 from app.common.logging_util import event_msg
 
@@ -23,25 +28,29 @@ HEARTBEAT_SEC = 15.0
 
 # stage 事件默认中文文案（前端 stageMessage / 输入框提示条）
 _STAGE_MSG = {
-    "coordinator": "正在解析投研意图…",
+    "coordinator": "正在理解你的问题…",
     "quote": "正在拉取行情…",
     "market": "正在分析走势…",
     "news": "正在整理资讯…",
     "finance": "正在整理财务要点…",
     "writer": "正在撰写报告…",
     "mailer": "正在处理邮件投递…",
+    "lookup": "正在查询行情与财务…",
+    "light_answer": "正在整理回答…",
+    "chat": "正在回复…",
 }
 
 
 def iter_research_stream(
     user_input: str,
     *,
+    conversation_id: int | None = None,
+    history_messages: list[dict[str, Any]] | None = None,
     should_cancel: Callable[[], bool],
 ) -> Iterator[dict[str, Any]]:
     """增量投研：yield stage/delta/ping；成功 final；取消 cancelled。
 
-    不落库；仅未取消时执行 Mailer。闸门语义与同步路径对齐。
-    步骤：初始化 → Coordinator →（可选）并行 Analyst → Writer → Mailer → final。
+    不落库。仅 heavy 且未取消时执行 Mailer。闸门语义与同步路径对齐。
     """
     # --- 0. 截止时间 + 共享 state（与同步 run_research_graph 字段对齐）---
     settings = get_settings()
@@ -51,8 +60,11 @@ def iter_research_stream(
 
     state: dict[str, Any] = {
         "user_input": user_input,
+        "route": "chat",
+        "conversation_id": conversation_id,
+        "history_messages": list(history_messages or []),
         "intent": {},
-        "skip_analysts": True,  # Coordinator 认出有效标的后才会改 False
+        "skip_analysts": True,
         "deadline_ts": deadline_ts,
         "quote_data": None,
         "market_data": None,
@@ -79,7 +91,7 @@ def iter_research_stream(
             if ev.get("event") == "cancelled":
                 return
             continue
-        state.update(ev.get("data") or {})  # 典型含 intent / skip_analysts
+        state.update(ev.get("data") or {})  # 典型含 intent / route / skip_analysts
         break
 
     if _past_deadline(state):
@@ -89,8 +101,16 @@ def iter_research_stream(
         yield {"event": "cancelled"}
         return
 
-    # --- 2. 并行 Analyst：有标的且未超时才跑；每路完成推 stage:quote|market|… ---
-    if not state.get("skip_analysts") and not state.get("timed_out"):
+    route = state.get("route") or "chat"
+    if route == "light_research":
+        yield from _stream_light(state, should_cancel, t0)
+        return
+    if route != "heavy_research":
+        yield from _stream_chat(state, should_cancel, t0)
+        return
+
+    # --- 2. 重投研：并行 Analyst；每路完成推 stage:quote|market|… ---
+    if not state.get("timed_out"):
         for ev in _run_analysts_parallel(state, should_cancel):
             yield ev
             if ev.get("event") == "cancelled":
@@ -121,16 +141,17 @@ def iter_research_stream(
         body_parts.append(chunk)
         yield {"event": "delta", "data": {"text": chunk}}
 
-    report_body = "".join(body_parts)
-    # 硬编码路径（超时/无标的）不加免责声明，与同步 Writer 一致
+    raw_body = "".join(body_parts)
+    report_body = raw_body if hardcoded is not None else ensure_compare_note(raw_body, state)
+    # 硬编码路径（超时）不加免责声明，与同步 Writer 一致
     pre_mail = report_body if hardcoded is not None else append_disclaimer(report_body)
 
     if should_cancel():
         yield {"event": "cancelled"}
         return
 
-    # --- 4. Mailer：取消则不发信；超时/无标的时 stage 文案改为「已跳过发送…」---
-    skip_mail_hint = bool(state.get("timed_out") or state.get("skip_analysts"))
+    # --- 4. Mailer：仅重投研到达；取消则不发信；超时时 stage 文案改为「已跳过发送…」---
+    skip_mail_hint = bool(state.get("timed_out"))
     yield _stage(
         "mailer",
         message="已跳过发送…" if skip_mail_hint else _STAGE_MSG["mailer"],
@@ -150,23 +171,104 @@ def iter_research_stream(
         state.update(ev.get("data") or {})
         break
 
-    # Mailer 追加的后缀（免责声明后半 /「报告已发送至…」）再推一条 delta，供前端续写
+    # 尚未推送给前端的后缀（对比说明 / 免责声明 / 投递说明）
     final_report = (state.get("report_md") or pre_mail).strip()
-    if final_report.startswith(report_body):
-        suffix = final_report[len(report_body) :]
+    if final_report.startswith(raw_body):
+        suffix = final_report[len(raw_body) :]
         if suffix:
             yield {"event": "delta", "data": {"text": suffix}}
 
-    # --- 5. final：给 chat 层落库用（不直接发给前端；会被转成 done）---
+    yield from _yield_final(state, t0, fallback=final_report or "分析未生成内容。\n\n未发送邮件。")
+
+
+def _stream_light(
+    state: dict[str, Any],
+    should_cancel: Callable[[], bool],
+    t0: float,
+) -> Iterator[dict[str, Any]]:
+    """轻投研：Lookup → LightAnswer，不进入 Mailer。"""
+    yield _stage("lookup")
+    if should_cancel():
+        yield {"event": "cancelled"}
+        return
+    if not state.get("timed_out"):
+        for ev in _run_node_with_heartbeat(lambda: lookup_node(state), should_cancel):
+            if ev.get("event") in ("ping", "cancelled"):
+                yield ev
+                if ev.get("event") == "cancelled":
+                    return
+                continue
+            _merge_patch(state, ev.get("data") or {})
+            break
+    if _past_deadline(state):
+        state["timed_out"] = True
+    if should_cancel():
+        yield {"event": "cancelled"}
+        return
+
+    yield _stage("light_answer")
+    if should_cancel():
+        yield {"event": "cancelled"}
+        return
+    parts: list[str] = []
+    for chunk in iter_light_deltas(state):
+        if should_cancel():
+            yield {"event": "cancelled"}
+            return
+        parts.append(chunk)
+        yield {"event": "delta", "data": {"text": chunk}}
+    state["report_md"] = "".join(parts).strip()
+    yield from _yield_final(state, t0, fallback=state["report_md"] or "暂时无法回答。")
+
+
+def _stream_chat(
+    state: dict[str, Any],
+    should_cancel: Callable[[], bool],
+    t0: float,
+) -> Iterator[dict[str, Any]]:
+    """闲聊：ChatNode，不拉数、不发信。"""
+    yield _stage("chat")
+    if should_cancel():
+        yield {"event": "cancelled"}
+        return
+    parts: list[str] = []
+    for chunk in iter_chat_deltas(state):
+        if should_cancel():
+            yield {"event": "cancelled"}
+            return
+        parts.append(chunk)
+        yield {"event": "delta", "data": {"text": chunk}}
+    state["report_md"] = "".join(parts).strip()
+    yield from _yield_final(state, t0, fallback=state["report_md"] or "暂时无法回答。")
+
+
+def _merge_patch(state: dict[str, Any], patch: dict) -> None:
+    """合并节点补丁；errors 按追加语义累加。"""
+    if "errors" in patch:
+        errs = list(state.get("errors") or [])
+        errs.extend(patch.get("errors") or [])
+        patch = {**patch, "errors": errs}
+    state.update(patch)
+
+
+def _yield_final(
+    state: dict[str, Any],
+    t0: float,
+    *,
+    fallback: str,
+) -> Iterator[dict[str, Any]]:
+    """组装 final 并打 route 日志。"""
     out = {
-        "report_md": final_report or "分析未生成内容。\n\n未发送邮件。",
+        "report_md": (state.get("report_md") or fallback).strip() or fallback,
         "delivery_status": state.get("delivery_status") or "",
         "timed_out": bool(state.get("timed_out")),
+        "route": state.get("route") or "",
     }
     intent = state.get("intent") or {}
     logger.info(
         event_msg(
             "research.stream_done",
+            route=out["route"] or "-",
             code=intent.get("asset_code") or "-",
             skip_analysts=bool(state.get("skip_analysts")),
             timed_out=out["timed_out"],

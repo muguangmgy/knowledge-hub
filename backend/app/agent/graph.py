@@ -1,3 +1,5 @@
+"""投研 LangGraph：Coordinator 后按 route 走重投研、轻投研或闲聊。"""
+
 from __future__ import annotations
 
 import logging
@@ -7,8 +9,11 @@ from typing import Any, Literal
 
 from langgraph.graph import END, START, StateGraph
 
+from app.agent.agents.chat import chat_node
 from app.agent.agents.coordinator import coordinator_node
 from app.agent.agents.finance_analyst import finance_analyst_node
+from app.agent.agents.light_answer import light_answer_node
+from app.agent.agents.lookup import lookup_node
 from app.agent.agents.mailer import mailer_node
 from app.agent.agents.market_analyst import market_analyst_node
 from app.agent.agents.news_analyst import news_analyst_node
@@ -22,24 +27,28 @@ logger = logging.getLogger(__name__)
 
 _compiled = None
 
-_Analyst = Literal[
+_Branch = Literal[
     "quote_analyst",
     "market_analyst",
     "news_analyst",
     "finance_analyst",
-    "writer",
+    "lookup",
+    "chat",
 ]
 
 
-def _route_after_coordinator(state: ResearchState) -> list[_Analyst]:
-    """有标的扇出四路 Analyst；无标的短路到 Writer。"""
-    if state.get("skip_analysts"):
-        return ["writer"]
-    return ["quote_analyst", "market_analyst", "news_analyst", "finance_analyst"]
+def _route_after_coordinator(state: ResearchState) -> list[_Branch]:
+    """重投研扇出四路；轻投研走 Lookup；其余走闲聊。"""
+    route = state.get("route") or "chat"
+    if route == "heavy_research":
+        return ["quote_analyst", "market_analyst", "news_analyst", "finance_analyst"]
+    if route == "light_research":
+        return ["lookup"]
+    return ["chat"]
 
 
 def _build_graph():
-    """编译固定边；四路 Analyst 经 list barrier 汇合后再进 Writer。"""
+    """编译三档条件边；四路 Analyst 经 list barrier 汇合后再进 Writer。"""
     g = StateGraph(ResearchState)
     g.add_node("coordinator", coordinator_node)
     g.add_node("quote_analyst", quote_analyst_node)
@@ -48,6 +57,9 @@ def _build_graph():
     g.add_node("finance_analyst", finance_analyst_node)
     g.add_node("writer", writer_node)
     g.add_node("mailer", mailer_node)
+    g.add_node("lookup", lookup_node)
+    g.add_node("light_answer", light_answer_node)
+    g.add_node("chat", chat_node)
 
     g.add_edge(START, "coordinator")
     g.add_conditional_edges(
@@ -58,16 +70,21 @@ def _build_graph():
             "market_analyst",
             "news_analyst",
             "finance_analyst",
-            "writer",
+            "lookup",
+            "chat",
         ],
     )
-    # 显式 barrier：等四路全部完成再调度 Writer（无标的仍走 conditional → writer）
+    # 显式 barrier：等四路全部完成再调度 Writer（仅 heavy_research）
     g.add_edge(
         ["quote_analyst", "market_analyst", "news_analyst", "finance_analyst"],
         "writer",
     )
     g.add_edge("writer", "mailer")
     g.add_edge("mailer", END)
+    # 轻投研与闲聊各自收口，不经过 Writer / Mailer
+    g.add_edge("lookup", "light_answer")
+    g.add_edge("light_answer", END)
+    g.add_edge("chat", END)
     return g.compile()
 
 
@@ -79,12 +96,23 @@ def get_compiled_graph():
     return _compiled
 
 
-def run_research_graph(user_input: str) -> dict[str, Any]:
-    """同步执行投研 Multi-Agent 图；必须含外层线程池超时兜底。"""
+def run_research_graph(
+    user_input: str,
+    *,
+    conversation_id: int | None = None,
+    history_messages: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """同步执行投研 Multi-Agent 图；必须含外层线程池超时兜底。
+
+    conversation_id 用来读写会话标的槽；history_messages 只给闲聊档。
+    """
     settings = get_settings()
     timeout_sec = max(1, int(settings.RESEARCH_GRAPH_TIMEOUT_SEC or 90))
     initial: ResearchState = {
         "user_input": user_input,
+        "route": "chat",
+        "conversation_id": conversation_id,
+        "history_messages": list(history_messages or []),
         "intent": {},
         "skip_analysts": True,
         "deadline_ts": time.time() + timeout_sec,
@@ -120,6 +148,7 @@ def run_research_graph(user_input: str) -> dict[str, Any]:
                 "report_md": "分析超时，请稍后重试。\n\n未发送邮件（超时）。",
                 "delivery_status": "已跳过（超时）",
                 "timed_out": True,
+                "route": "",
             }
 
     out = {
@@ -127,11 +156,13 @@ def run_research_graph(user_input: str) -> dict[str, Any]:
         or "分析未生成内容。\n\n未发送邮件。",
         "delivery_status": final.get("delivery_status") or "",
         "timed_out": bool(final.get("timed_out")),
+        "route": final.get("route") or "",
     }
     intent = final.get("intent") or {}
     logger.info(
         event_msg(
             "research.done",
+            route=out["route"] or "-",
             code=intent.get("asset_code") or "-",
             skip_analysts=bool(final.get("skip_analysts")),
             timed_out=out["timed_out"],

@@ -1,3 +1,5 @@
+"""重投研研报：按固定章节写 Markdown，表格与免责声明由系统补齐。"""
+
 from __future__ import annotations
 
 import json
@@ -10,7 +12,6 @@ from app.agent.tools.finance import format_finance_section_md
 from app.llm.client import chat_completion, chat_completion_stream
 
 TIMEOUT_MSG = "分析超时，请稍后重试。"
-NO_SYMBOL_MSG = "请说明股票名称或代码"
 # 免责声明不交给模型写，避免漏写或改口径
 DISCLAIMER = (
     "\n\n---\n\n"
@@ -107,6 +108,7 @@ def writer_node(state: dict) -> dict:
             news_section_md,
             finance_section_md,
         )
+        body = ensure_compare_note(body, state)
     return {"report_md": append_disclaimer(body)}
 
 
@@ -116,16 +118,13 @@ def prepare_writer(
     """解析 Writer 输入，供同步 writer_node 与流式 iter_writer_deltas 共用。
 
     返回 ``(硬编码正文不含免责声明, LLM messages, table_md, news_section_md, finance_section_md)``。
-    超时/无标的 → 硬编码非空、messages 为 None；
-    有标的 LLM 路径 → 硬编码为 None、messages 非空。
+    超时 → 硬编码非空、messages 为 None；
+    重投研 LLM 路径 → 硬编码为 None、messages 非空。
     """
     patch = check_deadline(state)
     timed_out = bool(state.get("timed_out") or patch.get("timed_out"))
     if timed_out:
         return TIMEOUT_MSG, None, "", "", ""
-
-    if state.get("skip_analysts"):
-        return NO_SYMBOL_MSG, None, "", "", ""
 
     intent = state.get("intent") or {}
     quote = state.get("quote_data") if isinstance(state.get("quote_data"), dict) else {}
@@ -225,6 +224,18 @@ def finalize_writer_body(
     if finance_section_md:
         text = _replace_or_inject_finance_section(text, finance_section_md)
     return text
+
+
+def ensure_compare_note(body: str, state: dict) -> str:
+    """多标的对比只写第一只时，在正文补一句暂不支持对比。"""
+    intent = state.get("intent") or {}
+    if not intent.get("compare_unsupported"):
+        return body
+    name = intent.get("asset_name") or "该标的"
+    sentence = f"本次仅分析 {name}，对比分析暂未支持"
+    if sentence in (body or ""):
+        return body
+    return f"{(body or '').rstrip()}\n\n{sentence}"
 
 
 def append_disclaimer(body: str) -> str:

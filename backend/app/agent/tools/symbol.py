@@ -1,3 +1,5 @@
+"""A 股代码表：新浪列表缓存到 Redis，并从原文抽出唯一标的。"""
+
 from __future__ import annotations
 
 import json
@@ -23,6 +25,30 @@ _HEADERS = {
 }
 
 _mem_table: list[tuple[str, str]] | None = None
+# (id(table), alias rows)；alias 为证券全称，或「地名/中国 + 唯一简称」
+_alias_for_id: tuple[int, list[tuple[str, str, str]]] | None = None
+
+# 只剥这些前缀，避免「卓创资讯」把「资讯」收成简称
+_REGION_PREFIXES = frozenset(
+    {
+        "贵州", "中国", "上海", "北京", "深圳", "广州", "江苏", "浙江", "山东",
+        "四川", "重庆", "天津", "南京", "杭州", "宁波", "厦门", "青岛", "大连",
+        "武汉", "长沙", "郑州", "合肥", "福州", "西安", "成都", "昆明", "海南",
+        "河北", "河南", "湖北", "湖南", "安徽", "江西", "福建", "辽宁", "吉林",
+        "山西", "陕西", "甘肃", "云南", "广西", "西藏", "新疆", "宁夏", "青海",
+        "泸州", "宜宾",
+    }
+)
+# 剥前缀后仍像日常用语的，不收成简称
+_GENERIC_SHORTS = frozenset(
+    {
+        "资讯", "文化", "机场", "银行", "股份", "科技", "集团", "证券", "发展",
+        "投资", "控股", "医药", "电力", "能源", "汽车", "食品", "材料", "电子",
+        "生物", "信息", "数据", "传媒", "建设", "地产", "国际", "实业", "工业",
+        "化工", "网络", "软件", "环保", "智能", "新材", "光电", "通信", "财务",
+        "行情", "分析", "报告", "现价", "邮件", "对比", "高速", "港务", "水务",
+    }
+)
 
 
 def _fetch_a_share_list() -> list[tuple[str, str]]:
@@ -157,48 +183,116 @@ def resolve_symbol(*, name: str | None, code: str | None) -> dict | None:
         want = m.group(1)
         for c, n in table:
             if c == want:
-                return {"code": c, "name": n}
+                return {"code": c, "name": _compact_name(n) or n}
         return None
 
-    raw_name = (name or "").strip()
+    raw_name = _compact_name(name or "")
     if not raw_name:
         return None
 
-    exact = [(c, n) for c, n in table if n == raw_name]
+    exact = [(c, n) for c, n in table if _compact_name(n) == raw_name]
     if len(exact) == 1:
         c, n = exact[0]
-        return {"code": c, "name": n}
+        return {"code": c, "name": _compact_name(n) or n}
 
-    partial = [(c, n) for c, n in table if raw_name in n or n in raw_name]
+    partial = [
+        (c, n)
+        for c, n in table
+        if raw_name in _compact_name(n) or _compact_name(n) in raw_name
+    ]
     if len(partial) == 1:
         c, n = partial[0]
-        return {"code": c, "name": n}
+        return {"code": c, "name": _compact_name(n) or n}
     return None
 
 
-def extract_symbol_from_text(text: str) -> dict | None:
-    """从原文规则抽取标的：先 6 位代码，再最长证券简称命中。"""
-    raw = (text or "").strip()
-    if not raw:
-        return None
+def _compact_name(name: str) -> str:
+    """去掉简称里的空格（代码表里「五 粮 液」这类写法）。"""
+    return re.sub(r"[\s\u3000]+", "", name or "")
 
-    m = _CODE_IN_TEXT_RE.search(raw)
-    if m:
-        hit = resolve_symbol(name=None, code=m.group(1))
-        if hit:
-            return hit
 
+def _alias_rows() -> list[tuple[str, str, str]]:
+    """唯一别名表：(alias, code, canonical_name)，长名优先。
+
+    收录证券全称。仅当全称以地名或「中国」开头、去掉该前缀后仍唯一，
+    且不是「资讯」「股份」这类日常词时，才收简称（如「茅台」→ 贵州茅台）。
+    """
+    global _alias_for_id
     try:
         table = _a_share_table()
     except Exception:
-        return None
+        return []
+    if _alias_for_id is not None and _alias_for_id[0] == id(table):
+        return _alias_for_id[1]
 
-    ranked = sorted(
-        ((c, n) for c, n in table if n and len(n) >= 2),
-        key=lambda x: len(x[1]),
-        reverse=True,
-    )
-    for code, name in ranked:
-        if name in raw:
-            return {"code": code, "name": name}
-    return None
+    buckets: dict[str, set[tuple[str, str]]] = {}
+    for code, name in table:
+        if not name or len(name) < 2:
+            continue
+        buckets.setdefault(name, set()).add((code, name))
+        compact = _compact_name(name)
+        if compact and compact != name:
+            buckets.setdefault(compact, set()).add((code, name))
+        prefix, short = name[:2], name[2:]
+        if (
+            len(name) >= 4
+            and prefix in _REGION_PREFIXES
+            and len(short) >= 2
+            and short not in _GENERIC_SHORTS
+        ):
+            buckets.setdefault(short, set()).add((code, name))
+
+    rows = [
+        (alias, code, name)
+        for alias, pairs in buckets.items()
+        if len(pairs) == 1
+        for code, name in pairs
+    ]
+    rows.sort(key=lambda item: len(item[0]), reverse=True)
+    _alias_for_id = (id(table), rows)
+    return rows
+
+
+def extract_symbols_from_text(text: str) -> list[dict]:
+    """按原文出现顺序抽取全部有效 A 股；同一位置优先更长匹配。"""
+    raw = (text or "").strip()
+    if not raw:
+        return []
+
+    spans: list[tuple[int, int, str, str]] = []
+    for alias, code, name in _alias_rows():
+        start = 0
+        while True:
+            idx = raw.find(alias, start)
+            if idx < 0:
+                break
+            spans.append((idx, idx + len(alias), code, name))
+            start = idx + 1
+
+    for match in _CODE_IN_TEXT_RE.finditer(raw):
+        hit = resolve_symbol(name=None, code=match.group(1))
+        if hit:
+            spans.append((match.start(1), match.end(1), hit["code"], hit["name"]))
+
+    # 同一起点先留更长的别名；区间重叠的短匹配丢掉
+    spans.sort(key=lambda item: (item[0], -(item[1] - item[0])))
+    picked: list[tuple[int, int, str, str]] = []
+    for start, end, code, name in spans:
+        if any(not (end <= prev_s or start >= prev_e) for prev_s, prev_e, _, _ in picked):
+            continue
+        picked.append((start, end, code, name))
+
+    out: list[dict] = []
+    seen: set[str] = set()
+    for _, _, code, name in picked:
+        if code in seen:
+            continue
+        seen.add(code)
+        out.append({"code": code, "name": _compact_name(name) or name})
+    return out
+
+
+def extract_symbol_from_text(text: str) -> dict | None:
+    """从原文规则抽取第一只有效 A 股（代码或唯一简称）。"""
+    hits = extract_symbols_from_text(text)
+    return hits[0] if hits else None

@@ -10,11 +10,17 @@ class ResearchState(TypedDict, total=False):
     errors 用 Annotated[..., operator.add]，以便多路 Analyst 并行时错误列表可合并。
     """
 
-    # 用户本轮原话（不带闲聊历史）
+    # 用户本轮原话
     user_input: str
-    # Coordinator 解析结果：asset_name / asset_code / want_email / to_email
+    # heavy_research | light_research | chat；条件边以它为准
+    route: str
+    # 会话 id，用于读写 Redis 标的槽；可空
+    conversation_id: int | None
+    # 最近最多 6 条 {role, content}；仅 chat 档拼进 prompt
+    history_messages: list[dict[str, Any]]
+    # Coordinator 解析：标的 / want_email / to_email / continues_previous
     intent: dict[str, Any]
-    # True=无有效标的，跳过 Analyst，Writer 走硬编码提示
+    # 兼容字段：等价于 route != heavy_research（驱边以 route 为准）
     skip_analysts: bool
     # 图内截止 Unix 时间戳；超时后各节点跳过实际工作且禁止发信
     deadline_ts: float
