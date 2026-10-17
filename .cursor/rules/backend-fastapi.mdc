@@ -6,7 +6,7 @@ alwaysApply: false
 
 # Backend（FastAPI）
 
-目录地图、投研拓扑、产品能力见 `project-overview` 与 `.docs/`；本规则只约束**怎么写后端**。
+目录地图与产品能力见 `project-overview` 和当前代码；本规则只约束**怎么写后端**。不主动对照 `.docs/`。
 
 ## 注释
 
@@ -22,7 +22,7 @@ alwaysApply: false
 - `app/schemas/`：请求/响应 Pydantic（如 `auth`/`chat`/`system`）；勿把校验模型堆进 api
 - `app/models/`：SQLAlchemy 表模型；开关字段 `status` / `visible` 为 `SmallInteger`（`1`=正常/显示，`0`=禁用/隐藏）；鉴权验 `status == 1`
 - 支撑：`auth/`（deps/security/seed）、`ingest/`、`rag/`、`llm/`、`agent/`（拓扑与换芯见 overview；工具放 `agent/tools/`，勿堆进 api）
-- SSE 帧：`app.common.sse`（`format_sse` / `format_sse_ping`）；事件语义见 `.docs/chat-sse-design.md`
+- SSE 帧：`app.common.sse`（`format_sse` / `format_sse_ping`）；事件语义以 `services/chat.py` 为准
 
 ```python
 # ❌ BAD：api 里写业务

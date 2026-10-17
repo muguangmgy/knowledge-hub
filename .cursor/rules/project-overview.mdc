@@ -9,11 +9,11 @@ alwaysApply: true
 
 主链路（RAG）：上传（pdf/docx/md/txt）→ 解析切分 → Embedding → Chroma + BM25 → 向量/BM25 双路 RRF → BGE Rerank 分数门控 → 依据不足拒答，否则一次 LLM 带引用生成。
 
-投研（`mode=direct`）：LangGraph 固定拓扑（Coordinator → 并行 quote/market/news/finance → Writer → Mailer）；腾讯行情/资讯 + AKShare 财务要点 + 新浪代码表；可选 SMTP 发 PDF。不改动 RAG。
+投研（`mode=direct`）：同一张 LangGraph 内三档路由（`heavy_research` / `light_research` / `chat`）。重投研仍是四路 Analyst → Writer → Mailer；轻投研只拉快照和财务并短答；闲聊带最近 6 条。会话标的在 Redis。不改动 RAG。拓扑以 `app/agent/graph.py` 为准。
 
-对话传输：UI 主路径 **`POST /api/chat/stream`（SSE）**；同步 **`POST /api/chat`** 保留给脚本/兼容。事件与取消语义见 `.docs/chat-sse-design.md`。
+对话传输：UI 主路径 **`POST /api/chat/stream`（SSE）**；同步 **`POST /api/chat`** 保留给脚本/兼容。事件名以 `app/common/sse.py` 与 `services/chat.py` 为准。
 
-鉴权与导航：JWT + User–Role–Menu；业务接口验登录且 `status=1`；侧栏按 `/me.menus` 渲染；系统管理见 `.docs/rbac-menu-design.md`。
+鉴权与导航：JWT + User–Role–Menu；业务接口验登录且 `status=1`；侧栏按 `/me.menus` 渲染。系统管理在 `api/users|roles|menus` 与 `views/system`。
 
 写法细则：后端见 `backend-fastapi`，前端见 `frontend-vue`（按文件 glob 挂载）。
 
@@ -24,13 +24,13 @@ alwaysApply: true
 | 向量 / 模型 | Chroma（本地）+ 内存 BM25 + SiliconFlow（Embedding / Rerank / Chat） |
 | 投研 | LangGraph + requests（腾讯/新浪）+ AKShare 财务要点 + 可选 Redis + SMTP |
 
-规格在 `.docs/`：主规格 `knowledge-qa-design.md`；另有双模式、投研 Multi-Agent、对话 SSE、RBAC 菜单，以及 `phase/` 阶段稿。行为回归优先仓库根 `scripts/`（迁移 + `verify_*.py`）；`backend/scripts/` 留有部分旧 phase 脚本。
+行为以当前代码为准，回归看仓库根 `scripts/`（迁移 + `verify_*.py`）；`backend/scripts/` 留有部分旧 phase 脚本。`.docs/` 只是历史设计记录，开发时不对照、不回写，除非用户点名其中某篇。
 
 # 目录结构
 
 ```
 knowledge-hub/
-├── .docs/                    # 主规格 + phase/ + 双模式 / 投研 / SSE / RBAC
+├── .docs/                    # 历史设计记录，不是实现依据
 ├── .cursor/rules/            # Cursor 约定
 ├── scripts/                  # 迁移 + verify_*.py（优先用这里）
 ├── backend/
