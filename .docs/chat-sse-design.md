@@ -322,7 +322,6 @@ flowchart TD
 - RAG 检索、Rerank、拒答、入库、RBAC 仍以 [knowledge-qa-design.md](./knowledge-qa-design.md) 为准（已注明 UI 主路径 SSE）。
 - 会话 `mode`、双路由、禁止混聊以 [chat-dual-mode-design.md](./chat-dual-mode-design.md) 为准；§2.2 已指向本文。
 - 投研拓扑、超时、发信闸门以 [stock-research-agent-design.md](./stock-research-agent-design.md) 为准；传输层 SSE 见本文，业务闸门不变（已回写）。
-- README / `.cursor/rules`（project-overview、frontend-vue、backend-fastapi）已与本文对齐。
 - 投研 PDF：`report_pdf` 使用 `nl2br`，与前端 `marked` `breaks: true` 对齐。
 
 ---
@@ -351,7 +350,7 @@ flowchart TD
 - [x] 前端主路径切 stream；Bearer + fetch；停止按钮；禁止并行第二条 stream
 - [x] 网关/Vite 缓冲与超时、心跳保活已写明
 - [x] 验收清单可演示（含 A5/A5b/A6/A9）
-- [x] 旧规格「非目标含 SSE」已回写（§11）；README / Cursor rules 已同步
+- [x] 旧规格「非目标含 SSE」已回写（§11）
 
 **批准人：** 项目组（对话确认 2026-10-15；审查修订同日）  
 **批准日期：** 2026-10-15

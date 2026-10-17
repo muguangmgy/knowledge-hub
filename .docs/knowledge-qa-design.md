@@ -142,7 +142,7 @@ knowledge-hub/
 │       ├── knowledge-qa-phase2-design.md
 │       ├── knowledge-qa-phase3-design.md
 │       └── knowledge-qa-phase4-design.md
-├── .cursor/rules/               # Cursor 约定（overview / backend / frontend）
+├── .cursor/rules/               # Cursor 约定
 ├── scripts/                     # 仓库根：迁移 + verify_*.py（含 verify_rbac_menu 等）
 ├── backend/
 │   ├── pyproject.toml

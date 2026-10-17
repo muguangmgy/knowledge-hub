@@ -15,7 +15,7 @@ alwaysApply: true
 
 鉴权与导航：JWT + User–Role–Menu；业务接口验登录且 `status=1`；侧栏按 `/me.menus` 渲染。系统管理在 `api/users|roles|menus` 与 `views/system`。
 
-写法细则：后端见 `backend-fastapi`，前端见 `frontend-vue`（按文件 glob 挂载）。
+协作见 `user-role`；写法细则：后端见 `backend-fastapi`，前端见 `frontend-vue`（按文件 glob 挂载）；提交见 `git-commit`。
 
 | 层 | 栈 |
 |----|-----|
