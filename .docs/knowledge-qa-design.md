@@ -22,6 +22,7 @@
 | [chat-dual-mode-design.md](./chat-dual-mode-design.md) | 双模式外壳：`rag` / `direct` 会话隔离、路由与 API |
 | [chat-sse-design.md](./chat-sse-design.md) | 对话 SSE 事件协议与取消语义 |
 | [stock-research-agent-design.md](./stock-research-agent-design.md) | **`mode=direct` 现网实现**：投研 Multi-Agent（取代原闲聊） |
+| [research-tri-route-design.md](./research-tri-route-design.md) | 投研三档路由：重投研 / 轻投研 / 闲聊（仍 `mode=direct`） |
 
 ---
 
@@ -322,7 +323,7 @@ knowledge-hub/
 - **会话创建（chat 懒建）**：`conversationId` **可选**；缺省 / `null` 时由 `/api/chat` **自动** `INSERT conversation`（归属当前用户，含 `mode`），响应带回 `conversationId`；前端「新对话」只清本地状态
 - 已传 `conversationId`：校验 `conversation.user_id == current_user.id`，否则 `40401`；请求 `mode` 须与会话一致（见 [chat-dual-mode-design.md](./chat-dual-mode-design.md)）
 - **rag 流程**：**混合检索 → Rerank 分数门控 → 空则拒答，否则 LLM 带引用生成**（生成**不带**历史）；检索与精排均用当前用户消息原文
-- **direct**：跳过检索；现网为投研 Multi-Agent（无闲聊历史）；详见 [stock-research-agent-design.md](./stock-research-agent-design.md)
+- **direct**：跳过检索；投研三档路由（重投研 / 轻投研不带历史，仅闲聊档带最近 6 条）；详见 [research-tri-route-design.md](./research-tri-route-design.md) 与 [stock-research-agent-design.md](./stock-research-agent-design.md)
 
 ---
 

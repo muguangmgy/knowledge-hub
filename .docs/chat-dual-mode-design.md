@@ -5,10 +5,10 @@
 - **作者**：项目组
 - **功能短名**：`chat-dual-mode`
 - **对应主文档**：[knowledge-qa-design.md](./knowledge-qa-design.md)
-- **后续规格**：[stock-research-agent-design.md](./stock-research-agent-design.md)（`mode=direct` 现网实现）
+- **后续规格**：[stock-research-agent-design.md](./stock-research-agent-design.md)（`mode=direct` 投研内核）；[research-tri-route-design.md](./research-tri-route-design.md)（三档路由）
 - **说明**：在「知识库问答（RAG）」之外增加第二条会话入口；用户显式选择模式；同一会话一种模式，不允许混聊。
 
-> **现网对齐（2026-10-14）**：本文定义的 **会话 `mode`、API、双路由、禁止混聊** 仍有效。原「`direct` = 纯 LLM 闲聊 + 最近 6 条历史」已被 [stock-research-agent-design.md](./stock-research-agent-design.md) **整段替换**：产品文案为「投研助手」，`_ask_direct` → LangGraph Multi-Agent，**不带闲聊历史**。业务入口现由左侧菜单驱动（见 [rbac-menu-design.md](./rbac-menu-design.md)），不再用顶栏三链接。下文留作双模式外壳与迁移依据；`direct` 内核以投研文档为准。
+> **现网对齐（2026-10-16）**：本文定义的 **会话 `mode`、API、双路由、禁止混聊** 仍有效。`direct` 内核为投研助手（见 [stock-research-agent-design.md](./stock-research-agent-design.md)），并经 [research-tri-route-design.md](./research-tri-route-design.md) 扩展为三档：**仅 chat 档带最近 6 条**；heavy / light 仍不把历史拼进研报或轻答 prompt。业务入口由左侧菜单驱动（见 [rbac-menu-design.md](./rbac-menu-design.md)）。下文留作双模式外壳；`direct` 内核以投研与三档文档为准。
 
 ---
 
@@ -47,7 +47,7 @@ Knowledge Hub 当前对话入口固定走混合检索 → Rerank → 拒答 / �
 - 私有文档库 / 按文档 ACL 检索
 - `direct` 独立模型、独立 temperature 配置（共用现有 `LLM_*`）
 - 同一会话内切换模式或混用历史
-- **`rag` 多轮指代理解（有意变更现网行为）**：知识库问答定位为「每轮独立、只答当前问题」——生成侧**不**把此前问答拼进 prompt。指代续问依赖检索命中当前问句本身，或把指代写进当前问句。理由：缩小 rag 幻觉面。原规划中「多轮闲聊由 `direct` 承担」已废止；`direct` 现为投研，亦**不**带闲聊历史。详见 §6.3、验收 A3。
+- **`rag` 多轮指代理解（有意变更现网行为）**：知识库问答定位为「每轮独立、只答当前问题」——生成侧**不**把此前问答拼进 prompt。指代续问依赖检索命中当前问句本身，或把指代写进当前问句。理由：缩小 rag 幻觉面。`direct` 现为投研三档：仅 chat 档带最近 6 条；heavy / light 不把历史拼进研报或轻答 prompt。详见 §6.3 与 [research-tri-route-design.md](./research-tri-route-design.md)。
 
 ---
 
@@ -74,7 +74,7 @@ flowchart TD
 
 - 检索**始终只用当前用户消息原文**，不拼历史。
 - `rag` 生成侧**有意不带历史**（见 §2.2）。
-- `direct` **不调用** `retrieve` / `rerank` / Embedding；现网为 Multi-Agent（原「6 条历史闲聊」已废止）。
+- `direct` **不调用** `retrieve` / `rerank` / Embedding；现网为投研三档。仅 chat 档带最近 6 条；heavy / light 不把历史拼进研报或轻答 prompt。
 
 ---
 
@@ -246,7 +246,7 @@ flowchart TD
 | 模式 | 检索是否用历史 | 生成是否用历史 |
 |------|----------------|----------------|
 | rag | 否 | **否**（有意变更现网：去掉最近 6 条；见 §2.2） |
-| direct | 不检索 | **否**（现网：每轮独立投研任务；原「最近 6 条闲聊」已废止） |
+| direct | 不检索 | **仅 chat 档**带最近 6 条；heavy / light 不把历史拼进研报或轻答 prompt |
 
 产品含义：`rag` / `direct` 会话均可在 UI 展示多轮消息气泡，但每一轮生成**彼此独立**；指代须写进当前问句。
 
@@ -330,7 +330,7 @@ flowchart TD
 ## 10. 与主规格关系
 
 - RAG 检索、Rerank 门控、入库等仍以 [knowledge-qa-design.md](./knowledge-qa-design.md) 与 phase1–4 为准；**双模式细节与系统表 `sys_` 前缀以本文为准**；**菜单型 RBAC 以 [rbac-menu-design.md](./rbac-menu-design.md) 为准**（已替代本文 §4.0 中的 permission 表）。
-- 主规格中「对话可带最近几条历史直接进生成 prompt」在双模式落地后对 **`rag` 废止**；投研落地后对 **`direct` 闲聊历史亦废止**（`direct` 内核见 [stock-research-agent-design.md](./stock-research-agent-design.md)）。
+- 主规格中「对话可带最近几条历史直接进生成 prompt」在双模式落地后对 **`rag` 废止**。`direct` 仅 chat 档带最近 6 条；heavy / light 不把历史拼进研报或轻答 prompt（见 [research-tri-route-design.md](./research-tri-route-design.md)）。
 - 系统表 `sys_*`、业务表去 `kh_`、`conversation.mode`、双路由仍以本文为准；业务入口导航现为侧栏菜单。
 
 ---
@@ -342,7 +342,7 @@ flowchart TD
 - [x] 同接口加 `mode`；字段缺失与 `null` 均默认 `rag`；非法非空值才 `40001`
 - [x] 列表不传 `mode` 默认只返回 `rag`（兼容旧前端）；新前端显式传 mode
 - [x] 前端两套入口（现网为侧栏）；复用组件 props 入 store；direct 不引入 CitationList/拒答
-- [x] rag / direct 生成均不依赖闲聊历史（direct 内核见投研文档）
+- [x] rag 生成不带历史；direct 仅 chat 档带最近 6 条，heavy / light 不把历史拼进研报或轻答 prompt
 - [x] 系统表 → `sys_*`，业务表去 `kh_`（§4.0）；Chroma `kh_chunks` 不改
 - [x] 存量：`conversation` 表末尾 `ADD COLUMN ... NOT NULL DEFAULT 'rag'`（无 AFTER/FIRST）
 - [x] 主规格与投研规格已与现网对齐；导航见 [rbac-menu-design.md](./rbac-menu-design.md)

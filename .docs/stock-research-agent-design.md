@@ -7,6 +7,7 @@
 - **对应主文档**：[knowledge-qa-design.md](./knowledge-qa-design.md)
 - **外壳文档**：[chat-dual-mode-design.md](./chat-dual-mode-design.md)（`mode` / 路由 / 混聊校验）
 - **说明**：将 `mode=direct` 闲聊替换为 LangGraph **固定拓扑 Multi-Agent** 投研：Coordinator → 并行 Analyst → Writer → Mailer。不改动 RAG。
+- **内核扩展（2026-10-16）**：[research-tri-route-design.md](./research-tri-route-design.md) 在同一张图内增加三档路由。下文「无闲聊 / 无标的仅硬编码拒答 / 全程不带历史」**不再是唯一出口**：`heavy_research` 仍走四路 Analyst → Writer → Mailer；轻问走 Lookup → LightAnswer；闲聊走 ChatNode。无标的硬编码「请说明股票名称或代码」已废止。仅 chat 档带最近 6 条历史。抬档否定、续指口径、简称去空格与日常词屏蔽以三档文档 §5.2 为准。
 
 ---
 
@@ -188,8 +189,8 @@ def run_research_graph(user_input: str) -> dict:
 
 - 结构化抽取标的、`want_email`；窗口 30 自然日。
 - 解析失败 → WARNING，当无标的，不抛 `50010`。
-- 经 `tools/symbol` **校验/补全**代码（不信 LLM 裸代码）；失败 → `skip_analysts=true`。
-- 有标的：`skip_analysts=false`，固定调度四路 Analyst（不读动态 task 列表）。
+- 经 `tools/symbol` **校验/补全**代码（不信 LLM 裸代码）；对不上且非续指 → `route=chat`（见三档文档）。简称去空格；日常词不作短名。
+- 仅 `heavy_research` 固定调度四路 Analyst（不读动态 task 列表）。轻问与闲聊不进本节 Writer / Mailer。
 
 **QuoteAnalystAgent / MarketAnalystAgent / NewsAnalystAgent / FinanceAnalystAgent**
 
@@ -199,7 +200,7 @@ def run_research_graph(user_input: str) -> dict:
 **WriterAgent**
 
 1. `timed_out` → **一律**写入硬编码「分析超时，请稍后重试」（**不调 LLM**；**覆盖**任何既有 `report_md`）。**拍板**：即使 Analyst 已有行情/资讯，也不出半成品研报。当前拓扑下 Writer 是 `report_md` 的唯一生产者，超时前不会已有正文；不做「非空则保留」分支（避免死条件）。  
-2. 无标的 / `skip_analysts` → 硬编码「请说明股票名称或代码」  
+2. 无标的不再进 Writer（改由 chat / light 承接，见三档文档）。`skip_analysts` 表示 `route != heavy_research`  
 3. 有标的且未超时 → LLM 综合数据写 Markdown（核心表、「三、资讯要点」「四、财务要点」由系统注入：资讯最多 6 条且标题为链接；财务为最近 4 期营收/归母净利/同比/ROE/毛利率表；免责声明由系统追加）
 
 **MailerAgent**

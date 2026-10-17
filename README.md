@@ -3,7 +3,7 @@
 企业文档知识库问答 + 股票投研助手：
 
 - **知识库问答（`mode=rag`）**：上传 PDF / docx / md / txt → 解析切分 → Embedding 入库 → 向量+BM25 混合检索（RRF）→ BGE Rerank → 依据不足拒答，否则一次 LLM 生成带引用答案。
-- **投研助手（`mode=direct`）**：一句话任务 → LangGraph 固定拓扑 Multi-Agent（Coordinator → 并行 quote/market/news/finance → Writer → Mailer）→ Markdown 报告；可选 SMTP 发 PDF 附件。
+- **投研助手（`mode=direct`）**：同一张 LangGraph 内三档路由。重投研：Coordinator → 并行 quote/market/news/finance → Writer → Mailer，Markdown 报告，可选 SMTP 发 PDF。轻投研只拉快照和财务并短答。闲聊带最近 6 条。会话标的在 Redis（约 2 小时）。
 - **菜单型 RBAC**：JWT + User–Role–Menu；侧栏按 `/me.menus` 渲染；系统管理（用户 / 角色 / 菜单）。
 - **对话 SSE**：UI 主路径 `POST /api/chat/stream`（打字流 + 投研阶段进度含财务 + 可停止）；同步 `POST /api/chat` 仍保留供脚本/兼容。
 
@@ -23,7 +23,7 @@
 - MySQL **8.0+**（提前创建库 `knowledge_hub`）
 - [uv](https://github.com/astral-sh/uv)（推荐，用于安装后端依赖）
 - SiliconFlow API Key（Embedding + Rerank + LLM）
-- （可选）Redis：加速 A 股代码表缓存；未配则每次冷启较慢
+- （可选）Redis：A 股代码表缓存，以及投研会话标的（续指「它」）。未配则代码表冷启较慢，续指当没有上一只，不报 500
 - （可选）SMTP：投研报告发信
 
 ## 快速开始
@@ -73,7 +73,7 @@ npm run dev
 - **菜单型 RBAC**：User–Role–Menu；侧栏按 `/me.menus` 渲染；系统管理三页（用户 / 角色 / 菜单）
 - 文档共享库：上传、列表、详情、物理删除
 - **知识库问答**（`/chat/rag`）：向量+BM25 → RRF → Rerank 分数门控 → 规则拒答或带 `citations` 生成；每轮独立，生成不带闲聊历史；SSE 打字流，引用先出
-- **投研助手**（`/chat/direct`）：Multi-Agent 近 30 日报告（行情/走势/资讯/财务要点）；SSE 阶段进度 + Writer 打字流；助手 Markdown 渲染；话术邮箱优先，否则 `RESEARCH_DEFAULT_EMAIL`；邮件为 PDF 附件（不含聊天投递说明；PDF 换行与网页 `breaks` 对齐）
+- **投研助手**（`/chat/direct`）：可问现价、可闲聊，也可出近 30 日研报（行情/走势/资讯/财务要点）。重投研才发信：话术邮箱优先，否则 `RESEARCH_DEFAULT_EMAIL`；邮件为 PDF 附件（不含聊天投递说明）。轻问带邮箱只回答并提示走研报流程。SSE 有阶段进度；重投研 Writer 打字流。会话里的「它」沿用最近一只股票，闲聊不改这个槽
 - 会话按 `mode` 隔离，禁止混聊；发送中可「停止」（取消不落半成品 assistant，投研不发信）
 
 ## 目录结构（摘要）
@@ -113,6 +113,7 @@ knowledge-hub/
 - [菜单型 RBAC](.docs/rbac-menu-design.md)
 - [双模式外壳](.docs/chat-dual-mode-design.md)
 - [投研 Multi-Agent](.docs/stock-research-agent-design.md)
+- [投研三档路由](.docs/research-tri-route-design.md)
 - [对话 SSE](.docs/chat-sse-design.md)
 
 ## 常用配置（`backend/.env`）
@@ -131,35 +132,14 @@ knowledge-hub/
 | `RAG_RERANK_RELATIVE_RATIO` | 精排相对落差（≥ Top1×比例），默认 0.5 |
 | `RAG_RERANK_KEEP_TOP1_FLOOR` | 滤空时 Top1 兜底地板，默认 0.15 |
 | `RERANK_MODEL` | 精排模型，默认 `BAAI/bge-reranker-v2-m3` |
-| `REDIS_URL` | 可选，如 `redis://127.0.0.1:6379/0`；空则跳过 Redis |
+| `REDIS_URL` | 可选，如 `redis://127.0.0.1:6379/0`；空则跳过代码表缓存和会话标的槽 |
 | `SMTP_*` | 投研发信（HOST/PORT/USER/PASSWORD/FROM/USE_SSL） |
 | `RESEARCH_DEFAULT_EMAIL` | 话术未写邮箱时的默认收件人 |
 | `RESEARCH_GRAPH_TIMEOUT_SEC` | 投研图超时秒数，默认 90 |
 
 完整示例见 `backend/.env.example`。
 
-## 回归脚本（可选）
-
-后端已启动在 `127.0.0.1:8000` 时：
-
-```bash
-cd backend
-.\.venv\Scripts\python.exe ..\scripts\verify_phase1_4.py
-
-# 对话 SSE 冒烟（A6/A7/A8 + 流式 meta/done）
-.\.venv\Scripts\python.exe ..\scripts\verify_chat_sse.py --user admin --password 123456
-
-# 菜单型 RBAC 冒烟
-.\.venv\Scripts\python.exe ..\scripts\verify_rbac_menu.py
-
-# 投研 Multi-Agent 冒烟
-.\.venv\Scripts\python.exe ..\scripts\verify_stock_research_agent.py
-
-# 双模式外壳（可选）
-.\.venv\Scripts\python.exe ..\scripts\verify_chat_dual_mode.py
-```
-
-旧库若仍有 `sys_permission` / `sys_role_permission`，可先跑 `..\scripts\migrate_rbac_menu.py` 再重启后端。
+旧库若仍有 `sys_permission` / `sys_role_permission`，可先跑 `scripts/migrate_rbac_menu.py` 再重启后端。
 
 ## License
 
