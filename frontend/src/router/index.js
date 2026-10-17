@@ -54,6 +54,11 @@ const routes = [
         name: 'system-menus',
         component: () => import('../views/system/MenuManageView.vue'),
       },
+      {
+        path: 'system/dev',
+        name: 'system-dev',
+        component: () => import('../views/system/DevDebugView.vue'),
+      },
     ],
   },
 ]

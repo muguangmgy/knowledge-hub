@@ -114,7 +114,12 @@ import * as menusApi from '../../api/menus'
 import IconSelect from '../../components/system/IconSelect.vue'
 
 /** 与后端 is_builtin_menu 对齐：三管理页 path + 系统管理目录 perms */
-const BUILTIN_PATHS = new Set(['/system/users', '/system/roles', '/system/menus'])
+const BUILTIN_PATHS = new Set([
+  '/system/users',
+  '/system/roles',
+  '/system/menus',
+  '/system/dev',
+])
 const BUILTIN_CATALOG_PERMS = new Set(['system:catalog'])
 
 const loading = ref(false)

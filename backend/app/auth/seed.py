@@ -18,6 +18,7 @@ SEED_MENUS: list[tuple[str, str | None, int, str, str, str | None, str | None, b
     ("sys_users", "sys", 11, "用户管理", "menu", "/system/users", "system:user:list", True, False),
     ("sys_roles", "sys", 12, "角色管理", "menu", "/system/roles", "system:role:list", True, False),
     ("sys_menus", "sys", 13, "菜单管理", "menu", "/system/menus", "system:menu:list", True, False),
+    ("sys_dev", "sys", 14, "开发调试", "menu", "/system/dev", "system:dev:debug", True, False),
     ("biz_rag", None, 20, "知识库问答", "menu", "/chat/rag", "biz:chat:rag", True, True),
     ("biz_direct", None, 21, "投研助手", "menu", "/chat/direct", "biz:chat:direct", True, True),
     ("biz_docs", None, 22, "文档", "menu", "/documents", "biz:doc:list", True, True),

@@ -34,8 +34,9 @@ alwaysApply: false
 ## HTTP / SSE
 
 - 短请求一律走 `api/http.js`（Bearer、`code !== 0` 拒绝、401/`40101` 清 Token 跳登录）
-- **问答 UI 主路径**：`askChatStream`（`POST /api/chat/stream`）；**不要**用 Axios 扛长流，**不要**用原生 `EventSource`（难带 Bearer）
-- 同步 `askChat`（`POST /api/chat`）仅脚本/兼容；超时仍 `120000`
+- **问答 UI 默认**：`askChatStream`（`POST /api/chat/stream`）；**不要**用 Axios 扛长流，**不要**用原生 `EventSource`（难带 Bearer）
+- 同步 `askChat`（`POST /api/chat`）：脚本/兼容，或「开发调试」关流式时由 `createChatStore` 走；超时仍 `120000`
+- 流式开关：`utils/chatStreamPref.js`（`VITE_CHAT_STREAM` 默认 + localStorage 覆盖）；页在 `/system/dev`
 - 其它超时：入库 `600000`；勿假装超时成功
 
 ```js

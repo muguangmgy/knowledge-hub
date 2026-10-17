@@ -1,6 +1,6 @@
 /**
  * 问答与会话 API。
- * askChat 同步保留（脚本/兼容）；UI 主路径用 askChatStream。
+ * UI 默认 askChatStream；开发调试关流式或脚本场景走 askChat。
  */
 import http, { clearToken, getToken } from './http'
 import router from '../router'
@@ -8,9 +8,10 @@ import router from '../router'
 /**
  * POST /api/chat（同步整包）
  * @param {{ message: string, conversationId?: number|null, mode?: 'rag'|'direct'|null }} payload
+ * @param {{ signal?: AbortSignal }} [config]
  */
-export function askChat(payload) {
-  return http.post('/api/chat', payload, { timeout: 120000 })
+export function askChat(payload, config = {}) {
+  return http.post('/api/chat', payload, { timeout: 120000, ...config })
 }
 
 /**

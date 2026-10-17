@@ -90,6 +90,7 @@ import { useRoute, useRouter } from 'vue-router'
 import {
   ArrowDown,
   ChatDotRound,
+  Cpu,
   Document,
   Expand,
   Fold,
@@ -149,6 +150,7 @@ function menuIcon(node) {
   if (path === '/system/users' || perms.includes('user')) return User
   if (path === '/system/roles' || perms.includes('role')) return UserFilled
   if (path === '/system/menus' || perms.includes('menu')) return MenuIcon
+  if (path === '/system/dev' || perms.includes('dev')) return Cpu
   if (path === '/chat/rag') return ChatDotRound
   if (path === '/chat/direct') return TrendCharts
   if (path === '/documents') return Document

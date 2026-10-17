@@ -3,14 +3,16 @@ from sqlalchemy.orm import Session
 
 from app.models.rbac import Menu, RoleMenu, UserRole
 
-# 内置系统管理三页（不可删）
-BUILTIN_MENU_PATHS = frozenset({"/system/users", "/system/roles", "/system/menus"})
+# 内置系统管理页（不可删）
+BUILTIN_MENU_PATHS = frozenset(
+    {"/system/users", "/system/roles", "/system/menus", "/system/dev"}
+)
 # 内置「系统管理」目录（靠 perms 识别，无 path）
 BUILTIN_CATALOG_PERMS = frozenset({"system:catalog"})
 
 
 def is_builtin_menu(menu: Menu) -> bool:
-    """内置系统管理目录及三菜单（不可删除）。"""
+    """内置系统管理目录及菜单（不可删除）。"""
     if menu.path and menu.path in BUILTIN_MENU_PATHS:
         return True
     if menu.type == "catalog" and menu.perms in BUILTIN_CATALOG_PERMS:
