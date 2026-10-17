@@ -18,8 +18,8 @@ class ResearchState(TypedDict, total=False):
     conversation_id: int | None
     # 最近最多 6 条 {role, content}；仅 chat 档拼进 prompt
     history_messages: list[dict[str, Any]]
-    # Coordinator 解析：标的 / want_email / to_email / continues_previous
-    intent: dict[str, Any]
+    # Coordinator 解析：标的 / 发信 / 指代等
+    intent: IntentState
     # 兼容字段：等价于 route != heavy_research（驱边以 route 为准）
     skip_analysts: bool
     # 图内截止 Unix 时间戳；超时后各节点跳过实际工作且禁止发信
@@ -40,3 +40,23 @@ class ResearchState(TypedDict, total=False):
     timed_out: bool
     # 发信结果摘要（日志/调试；聊天侧主要看 report_md 文末说明）
     delivery_status: str
+
+class IntentState(TypedDict, total=False):
+    """Coordinator 解析结果；键按节点逐步补齐。"""
+
+    # 解析出的股票代码（如 sh600519）；未解析到则为 None
+    asset_code: str | None
+    # 标的名称；与 asset_code 成对写入
+    asset_name: str | None
+    # 用户是否要求把报告发邮件
+    want_email: bool
+    # 收件邮箱；可从原文或 LLM 解析得到
+    to_email: str | None
+    # 本轮是否在指代上一只股票（如「它」「这只」）
+    continues_previous: bool
+    # 需要澄清标的（缺码 / 会话无槽等）时走 chat 提示
+    clarify_previous: bool
+    # 提到了名称但未命中覆盖池时的原文名
+    uncovered_name: str
+    # 多标的对比等暂不支持场景，Writer 可据此提示
+    compare_unsupported: bool
