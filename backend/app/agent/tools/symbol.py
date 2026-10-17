@@ -1,17 +1,25 @@
-"""A 股代码表：新浪列表缓存到 Redis，并从原文抽出唯一标的。"""
+"""A 股代码表：Redis / 本地文件缓存，并从原文抽出唯一标的。"""
 
 from __future__ import annotations
 
 import json
+import logging
 import re
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
 
 import requests
+
+from app.common.logging_util import event_msg
 
 _CODE_RE = re.compile(r"^(?:sh|sz|bj)?(\d{6})$", re.I)
 _CODE_IN_TEXT_RE = re.compile(r"(?<!\d)(\d{6})(?!\d)")
 _REDIS_KEY = "kh:agent:a_share_symbols"
 _REDIS_TTL_SEC = 60 * 60 * 24  # 24h
+# Redis 未命中时的本地兜底（backend/data/…，与 kb/chroma 同级）
+_LOCAL_REL = "data/agent/a_share_symbols.json"
 
 # 新浪行情中心节点（沪 A / 深 A / 创业板 / 科创板）
 _SINA_NODES = ("sh_a", "sz_a", "cyb", "kcb")
@@ -23,10 +31,12 @@ _HEADERS = {
     "User-Agent": "Mozilla/5.0",
     "Referer": "https://finance.sina.com.cn/",
 }
+_PAGE_SIZE = 100
 
-_mem_table: list[tuple[str, str]] | None = None
-# (id(table), alias rows)；alias 为证券全称，或「地名/中国 + 唯一简称」
-_alias_for_id: tuple[int, list[tuple[str, str, str]]] | None = None
+_table_lock = threading.Lock()
+_refreshing = False
+
+logger = logging.getLogger(__name__)
 
 # 只剥这些前缀，避免「卓创资讯」把「资讯」收成简称
 _REGION_PREFIXES = frozenset(
@@ -51,39 +61,62 @@ _GENERIC_SHORTS = frozenset(
 )
 
 
-def _fetch_a_share_list() -> list[tuple[str, str]]:
-    """新浪节点分页拉取 A 股代码/简称（不依赖 akshare）。"""
+def _parse_rows(data: object) -> list[tuple[str, str]] | None:
+    """把 JSON 列表解析成 (code, name)；非法则 None。"""
+    if not isinstance(data, list):
+        return None
+    out: list[tuple[str, str]] = []
+    for item in data:
+        if isinstance(item, (list, tuple)) and len(item) >= 2:
+            out.append((str(item[0]), str(item[1])))
+    return out or None
+
+
+def _fetch_node(node: str) -> list[tuple[str, str]]:
+    """分页拉取单个新浪节点的代码/简称。"""
     rows: list[tuple[str, str]] = []
     seen: set[str] = set()
-    page_size = 80
+    page = 1
+    while page <= 80:
+        params = {
+            "page": page,
+            "num": _PAGE_SIZE,
+            "sort": "symbol",
+            "asc": 1,
+            "node": node,
+            "symbol": "",
+            "_s_r_a": "page",
+        }
+        batch = _sina_page(params)
+        if not batch:
+            break
+        for item in batch:
+            code = str(item.get("code") or "").strip()
+            name = str(item.get("name") or "").strip()
+            m = _CODE_RE.match(code)
+            if not m or not name or code in seen:
+                continue
+            seen.add(code)
+            rows.append((m.group(1), name))
+        if len(batch) < _PAGE_SIZE:
+            break
+        page += 1
+        time.sleep(0.05)
+    return rows
 
-    for node in _SINA_NODES:
-        page = 1
-        while page <= 80:
-            params = {
-                "page": page,
-                "num": page_size,
-                "sort": "symbol",
-                "asc": 1,
-                "node": node,
-                "symbol": "",
-                "_s_r_a": "page",
-            }
-            batch = _sina_page(params)
-            if not batch:
-                break
-            for item in batch:
-                code = str(item.get("code") or "").strip()
-                name = str(item.get("name") or "").strip()
-                m = _CODE_RE.match(code)
-                if not m or not name or code in seen:
+
+def _fetch_a_share_list() -> list[tuple[str, str]]:
+    """四节点并行分页拉取 A 股代码/简称（不依赖 akshare）。"""
+    rows: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    with ThreadPoolExecutor(max_workers=len(_SINA_NODES)) as pool:
+        futs = [pool.submit(_fetch_node, node) for node in _SINA_NODES]
+        for fut in as_completed(futs):
+            for code, name in fut.result():
+                if code in seen:
                     continue
                 seen.add(code)
-                rows.append((m.group(1), name))
-            if len(batch) < page_size:
-                break
-            page += 1
-            time.sleep(0.05)
+                rows.append((code, name))
     return rows
 
 
@@ -108,6 +141,13 @@ def _sina_page(params: dict) -> list[dict]:
     raise RuntimeError(f"sina stock list failed: {last_err}")
 
 
+def _local_path() -> Path:
+    """本地代码表路径（锚定 backend 根）。"""
+    from app.common.config import get_settings
+
+    return get_settings().resolve_path(_LOCAL_REL)
+
+
 def _load_from_redis() -> list[tuple[str, str]] | None:
     """从 Redis 读 A 股代码表缓存；未配置或失败返回 None。"""
     from app.common.redis_client import get_redis
@@ -119,14 +159,7 @@ def _load_from_redis() -> list[tuple[str, str]] | None:
         raw = client.get(_REDIS_KEY)
         if not raw:
             return None
-        data = json.loads(raw)
-        if not isinstance(data, list):
-            return None
-        out: list[tuple[str, str]] = []
-        for item in data:
-            if isinstance(item, (list, tuple)) and len(item) >= 2:
-                out.append((str(item[0]), str(item[1])))
-        return out or None
+        return _parse_rows(json.loads(raw))
     except Exception:
         return None
 
@@ -145,30 +178,100 @@ def _save_to_redis(rows: list[tuple[str, str]]) -> None:
         pass
 
 
-def _a_share_table() -> list[tuple[str, str]]:
-    """A 股列表：进程内存 → Redis → 新浪节点。"""
-    global _mem_table
-    if _mem_table is not None:
-        return _mem_table
+def _load_from_file() -> list[tuple[str, str]] | None:
+    """从本地 JSON 读代码表；不存在或失败返回 None。"""
+    path = _local_path()
+    try:
+        if not path.is_file():
+            return None
+        return _parse_rows(json.loads(path.read_text(encoding="utf-8")))
+    except Exception:
+        return None
 
+
+def _save_to_file(rows: list[tuple[str, str]]) -> None:
+    """原子写入本地 JSON；失败静默忽略。"""
+    if not rows:
+        return
+    path = _local_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = json.dumps(rows, ensure_ascii=False, separators=(",", ":"))
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(payload, encoding="utf-8")
+        tmp.replace(path)
+    except Exception:
+        pass
+
+
+def _local_age_sec() -> float | None:
+    """本地文件年龄（秒）；不存在或失败返回 None。"""
+    path = _local_path()
+    try:
+        if not path.is_file():
+            return None
+        return max(0.0, time.time() - path.stat().st_mtime)
+    except OSError:
+        return None
+
+
+def _maybe_refresh_async() -> None:
+    """本地文件超过 TTL 时后台重拉新浪，不挡当前解析。"""
+    global _refreshing
+    age = _local_age_sec()
+    if age is None or age < _REDIS_TTL_SEC or _refreshing:
+        return
+    _refreshing = True
+
+    def _run() -> None:
+        global _refreshing
+        try:
+            rows = _fetch_a_share_list()
+            if not rows:
+                return
+            _save_to_redis(rows)
+            _save_to_file(rows)
+            logger.info(event_msg("agent.symbol_refresh_ok", rows=len(rows)))
+        except Exception as exc:
+            logger.warning(event_msg("agent.symbol_refresh_failed", err=exc))
+        finally:
+            _refreshing = False
+
+    threading.Thread(target=_run, name="symbol-refresh", daemon=True).start()
+
+
+def _a_share_table() -> list[tuple[str, str]]:
+    """A 股列表：Redis → 本地文件 → 新浪节点。"""
     cached = _load_from_redis()
     if cached is not None:
-        _mem_table = cached
-        return _mem_table
+        # 仅在本地缺失时回写，避免每次解析都写盘
+        if _local_age_sec() is None:
+            _save_to_file(cached)
+        return cached
 
-    rows = _fetch_a_share_list()
-    _mem_table = rows
-    if rows:
-        _save_to_redis(rows)
-    return _mem_table
+    with _table_lock:
+        cached = _load_from_redis()
+        if cached is not None:
+            if _local_age_sec() is None:
+                _save_to_file(cached)
+            return cached
+
+        local = _load_from_file()
+        if local is not None:
+            _save_to_redis(local)
+            _maybe_refresh_async()
+            return local
+
+        rows = _fetch_a_share_list()
+        if rows:
+            _save_to_redis(rows)
+            _save_to_file(rows)
+        return rows
 
 
 def warm_symbol_cache() -> int:
-    """启动预热：填满 Redis + 进程内存；返回条数。"""
-    global _mem_table
-    _mem_table = None
+    """启动预热：尽量填满 Redis / 本地文件；返回条数。"""
     return len(_a_share_table())
-
 
 def resolve_symbol(*, name: str | None, code: str | None) -> dict | None:
     """校验/补全标的；成功返回 {code, name}，失败返回 None。"""
@@ -217,13 +320,10 @@ def _alias_rows() -> list[tuple[str, str, str]]:
     收录证券全称。仅当全称以地名或「中国」开头、去掉该前缀后仍唯一，
     且不是「资讯」「股份」这类日常词时，才收简称（如「茅台」→ 贵州茅台）。
     """
-    global _alias_for_id
     try:
         table = _a_share_table()
     except Exception:
         return []
-    if _alias_for_id is not None and _alias_for_id[0] == id(table):
-        return _alias_for_id[1]
 
     buckets: dict[str, set[tuple[str, str]]] = {}
     for code, name in table:
@@ -249,9 +349,7 @@ def _alias_rows() -> list[tuple[str, str, str]]:
         for code, name in pairs
     ]
     rows.sort(key=lambda item: len(item[0]), reverse=True)
-    _alias_for_id = (id(table), rows)
     return rows
-
 
 def extract_symbols_from_text(text: str) -> list[dict]:
     """按原文出现顺序抽取全部有效 A 股；同一位置优先更长匹配。"""
