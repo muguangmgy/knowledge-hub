@@ -11,6 +11,15 @@
         >
           全部重新解析
         </el-button>
+        <el-button
+          type="danger"
+          plain
+          :disabled="!selectedRows.length || docStore.reingesting || docStore.batchDeleting"
+          :loading="docStore.batchDeleting"
+          @click="onBatchDelete"
+        >
+          删除所选
+        </el-button>
       </div>
       <div class="table-wrap">
         <el-table
@@ -21,7 +30,9 @@
           border
           height="100%"
           class="doc-table fill-table"
+          @selection-change="onSelectionChange"
         >
+          <el-table-column type="selection" width="48" align="center" />
           <el-table-column prop="title" label="标题" min-width="160" align="center" show-overflow-tooltip />
           <el-table-column prop="filename" label="文件名" min-width="180" align="center" show-overflow-tooltip />
           <el-table-column label="类型" width="100" align="center">
@@ -58,7 +69,7 @@
     <el-dialog
       v-model="uploadVisible"
       title="上传文档"
-      width="520px"
+      width="560px"
       destroy-on-close
     >
       <UploadPanel @uploaded="onUploaded" />
@@ -67,7 +78,7 @@
 </template>
 
 <script setup>
-/** 文档列表：上传走弹窗；刷新/物理删除。 */
+/** 文档列表：上传走弹窗；勾选批量删除；刷新/物理删除。 */
 import { onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import UploadPanel from '../../components/ingest/UploadPanel.vue'
@@ -76,6 +87,7 @@ import { useDocumentStore } from '../../stores/document'
 const docStore = useDocumentStore()
 const uploadVisible = ref(false)
 const reingestRowId = ref(null)
+const selectedRows = ref([])
 
 /** 字节数格式化为可读大小。 */
 function formatBytes(n) {
@@ -95,9 +107,16 @@ async function refresh() {
   }
 }
 
-/** 入库成功：关弹窗并刷新列表。 */
-async function onUploaded() {
-  uploadVisible.value = false
+/** 表格勾选变化；「删除所选」只处理这些行。 */
+function onSelectionChange(rows) {
+  selectedRows.value = rows || []
+}
+
+/** 入库回调：全部成功才关弹窗；部分失败时已刷新列表。 */
+async function onUploaded(payload) {
+  if (payload?.allOk) {
+    uploadVisible.value = false
+  }
   await refresh()
 }
 
@@ -112,6 +131,40 @@ async function onDelete(row) {
   } catch (err) {
     if (err === 'cancel' || err === 'close') return
     ElMessage.error(err?.message || '删除失败')
+  }
+}
+
+/** 勾选批量删除。 */
+async function onBatchDelete() {
+  const rows = selectedRows.value
+  if (!rows.length) return
+  try {
+    await ElMessageBox.confirm(
+      `确认删除所选 ${rows.length} 个文档？将物理删除索引与文件。`,
+      '删除所选',
+      { type: 'warning' },
+    )
+    const ids = rows.map((r) => r.id)
+    const summary = await docStore.removeBatch(ids)
+    selectedRows.value = []
+    const failed = Number(summary.failed || 0)
+    const okCount = Number(summary.ok || 0)
+    if (failed > 0) {
+      const lines = (summary.errors || []).map((e) => {
+        const name = e.filename || `id=${e.documentId}`
+        return `${name}：${e.message || e.reason || '失败'}`
+      })
+      ElMessage.warning({
+        message: `删除成功 ${okCount} 条，失败 ${failed} 条\n${lines.join('\n')}`,
+        duration: 8000,
+        showClose: true,
+      })
+    } else {
+      ElMessage.success(`删除成功 ${okCount} 条`)
+    }
+  } catch (err) {
+    if (err === 'cancel' || err === 'close') return
+    ElMessage.error(err?.message || '批量删除失败')
   }
 }
 
@@ -179,6 +232,7 @@ onMounted(refresh)
   display: flex;
   gap: 8px;
   margin-bottom: 12px;
+  flex-wrap: wrap;
 }
 
 .table-wrap {

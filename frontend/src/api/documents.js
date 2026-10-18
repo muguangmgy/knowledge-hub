@@ -1,4 +1,4 @@
-/** 文档 API：列表 / 删除 / 上传 / 重新解析（入库 timeout 10min）。 */
+/** 文档 API：列表 / 删除 / 上传 / 批量 / 重新解析（入库 timeout 10min）。 */
 import http from './http'
 
 /** GET /api/documents */
@@ -20,6 +20,23 @@ export function uploadDocument(file, onUploadProgress) {
     headers: { 'Content-Type': 'multipart/form-data' },
     onUploadProgress,
   })
+}
+
+/** POST /api/documents/batch：按列表顺序 append files，后端用该顺序编 index。 */
+export function uploadDocumentsBatch(files) {
+  const form = new FormData()
+  for (const file of files) {
+    form.append('files', file)
+  }
+  return http.post('/api/documents/batch', form, {
+    timeout: 600000,
+    headers: { 'Content-Type': 'multipart/form-data' },
+  })
+}
+
+/** POST /api/documents/batch-delete：勾选 id，部分成功不回滚。 */
+export function deleteDocumentsBatch(ids) {
+  return http.post('/api/documents/batch-delete', { ids })
 }
 
 /** POST /api/documents/:id/reingest — 用服务器原文件按最新规则重建索引 */

@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import logging
+import re
 import shutil
 from pathlib import Path
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -12,13 +13,19 @@ from app.common.config import get_settings
 from app.common.errors import AppError, ErrorCode
 from app.common.logging_util import event_msg
 from app.ingest.chunker import chunk_text, text_for_embedding
-from app.ingest.parser import detect_file_type, parse_bytes
+from app.ingest.parser import ALLOWED_TYPES, detect_file_type, parse_bytes
 from app.models.chunk import Chunk
 from app.models.document import Document
 from app.rag import bm25_store, chroma_store
 from app.rag.embedding import embed_texts
 
 logger = logging.getLogger(__name__)
+
+# 批量导入只接受 2～6 个；单文件仍走 ingest_upload
+BATCH_UPLOAD_MIN = 2
+BATCH_UPLOAD_MAX = 6
+_COLLATION_SAFE = re.compile(r"^[A-Za-z0-9_]+$")
+_filename_collation_cache: str | None = None
 
 
 def list_documents(db: Session) -> list[dict]:
@@ -145,7 +152,7 @@ def ingest_upload(db: Session, *, filename: str, data: bytes) -> dict:
         db.refresh(document)
         logger.info(
             event_msg(
-                "ingest.upload_ok",
+                "ingest_upload",
                 document_id=document.id,
                 filename=safe_name,
                 chunks=len(chunk_rows),
@@ -165,7 +172,7 @@ def ingest_upload(db: Session, *, filename: str, data: bytes) -> dict:
         db.rollback()
         _cleanup_partial(settings, document, file_path, chroma_ids)
         logger.warning(
-            event_msg("ingest.upload_failed", filename=safe_name, err=exc)
+            event_msg("ingest_upload", filename=safe_name, err=exc)
         )
         raise AppError(
             ErrorCode.INGEST_FAILED, f"入库失败: {exc}", http_status=500
@@ -209,7 +216,7 @@ def delete_document(db: Session, document_id: int) -> None:
 
     logger.info(
         event_msg(
-            "ingest.delete_ok",
+            "delete_document",
             document_id=document_id,
             filename=filename,
             chunks=len(chroma_ids),
@@ -328,7 +335,7 @@ def reingest_document(db: Session, document_id: int) -> dict:
         db.rollback()
         logger.warning(
             event_msg(
-                "ingest.reingest_failed",
+                "reingest_document",
                 document_id=document_id,
                 filename=doc.filename,
                 err=exc,
@@ -340,7 +347,7 @@ def reingest_document(db: Session, document_id: int) -> dict:
 
     logger.info(
         event_msg(
-            "ingest.reingest_ok",
+            "reingest_document",
             document_id=doc.id,
             filename=doc.filename,
             chunks=len(chunk_rows),
@@ -364,7 +371,7 @@ def reingest_all_documents(db: Session) -> dict:
             errors.append({"documentId": doc_id, "message": str(exc)})
     logger.info(
         event_msg(
-            "ingest.reingest_all_done",
+            "reingest_all_documents",
             total=len(ids),
             ok=len(ok_items),
             failed=len(errors),
@@ -377,6 +384,270 @@ def reingest_all_documents(db: Session) -> dict:
         "items": ok_items,
         "errors": errors,
     }
+
+
+def ingest_uploads(db: Session, files: list[tuple[str, bytes]]) -> dict:
+    """批量入库：预检后逐份 ingest_upload；部分成功不回滚。"""
+    total = len(files)
+    if total < BATCH_UPLOAD_MIN or total > BATCH_UPLOAD_MAX:
+        raise AppError(
+            ErrorCode.BAD_REQUEST,
+            f"批量导入须提交 {BATCH_UPLOAD_MIN}～{BATCH_UPLOAD_MAX} 个文件",
+            http_status=400,
+        )
+
+    collation = _document_filename_collation(db)
+    ok_items: list[dict] = []
+    errors: list[dict] = []
+    passed_names: list[str] = []
+    pending: list[tuple[int, str, bytes]] = []
+
+    # 先整批预检：失败记 precheck，不调用 ingest_upload；index 对应该次提交顺序
+    for index, (filename, data) in enumerate(files):
+        pre = _precheck_batch_file(
+            db,
+            filename=filename,
+            data=data,
+            passed_names=passed_names,
+            collation=collation,
+        )
+        if pre is not None:
+            errors.append(
+                {
+                    "index": index,
+                    "filename": pre["filename"],
+                    "phase": "precheck",
+                    "reason": pre["reason"],
+                    "message": pre["message"],
+                }
+            )
+            continue
+        safe_name = Path(filename).name
+        passed_names.append(safe_name)
+        pending.append((index, safe_name, data))
+
+    # 通过预检的按原顺序完整入库；单份失败不回滚已成功项
+    for index, safe_name, data in pending:
+        try:
+            doc = ingest_upload(db, filename=safe_name, data=data)
+            item = dict(doc)
+            item["index"] = index
+            ok_items.append(item)
+        except AppError as exc:
+            errors.append(
+                {
+                    "index": index,
+                    "filename": safe_name,
+                    "phase": "process",
+                    "reason": _map_ingest_process_reason(exc),
+                    "message": exc.message,
+                }
+            )
+        except Exception as exc:
+            errors.append(
+                {
+                    "index": index,
+                    "filename": safe_name,
+                    "phase": "process",
+                    "reason": "other",
+                    "message": str(exc),
+                }
+            )
+
+    logger.info(
+        event_msg(
+            "ingest_uploads",
+            total=total,
+            ok=len(ok_items),
+            failed=len(errors),
+        )
+    )
+    return {
+        "total": total,
+        "ok": len(ok_items),
+        "failed": len(errors),
+        "items": ok_items,
+        "errors": errors,
+    }
+
+
+def delete_documents(db: Session, ids: list[int]) -> dict:
+    """批量物理删除：逐条 delete_document；部分成功不回滚。"""
+    if not ids:
+        raise AppError(ErrorCode.BAD_REQUEST, "ids 不能为空", http_status=400)
+    for item in ids:
+        if not isinstance(item, int) or isinstance(item, bool) or item < 1:
+            raise AppError(ErrorCode.BAD_REQUEST, "ids 须为正整数", http_status=400)
+
+    # 按首次出现去重，重复 id 只删一次
+    unique: list[int] = []
+    seen: set[int] = set()
+    for doc_id in ids:
+        if doc_id in seen:
+            continue
+        seen.add(doc_id)
+        unique.append(doc_id)
+
+    ok_items: list[dict] = []
+    errors: list[dict] = []
+    for doc_id in unique:
+        # 删除前记下文件名，不存在或删除失败时失败项仍能带上
+        doc = db.get(Document, doc_id)
+        filename = doc.filename if doc is not None else ""
+        try:
+            delete_document(db, doc_id)
+            ok_items.append({"documentId": doc_id, "filename": filename})
+        except AppError as exc:
+            reason = (
+                "not_found"
+                if exc.code == ErrorCode.NOT_FOUND
+                else "delete_failed"
+            )
+            errors.append(
+                {
+                    "documentId": doc_id,
+                    "filename": filename,
+                    "reason": reason,
+                    "message": exc.message,
+                }
+            )
+        except Exception as exc:
+            errors.append(
+                {
+                    "documentId": doc_id,
+                    "filename": filename,
+                    "reason": "delete_failed",
+                    "message": str(exc),
+                }
+            )
+
+    logger.info(
+        event_msg(
+            "delete_documents",
+            total=len(unique),
+            ok=len(ok_items),
+            failed=len(errors),
+        )
+    )
+    return {
+        "total": len(unique),
+        "ok": len(ok_items),
+        "failed": len(errors),
+        "items": ok_items,
+        "errors": errors,
+    }
+
+
+def _document_filename_collation(db: Session) -> str:
+    """读取 document.filename 列 collation；结果缓存。"""
+    global _filename_collation_cache
+    if _filename_collation_cache is not None:
+        return _filename_collation_cache
+    row = db.execute(
+        text(
+            "SELECT COLLATION_NAME FROM information_schema.COLUMNS "
+            "WHERE TABLE_SCHEMA = DATABASE() "
+            "AND TABLE_NAME = 'document' AND COLUMN_NAME = 'filename'"
+        )
+    ).first()
+    collation = (row[0] if row else None) or "utf8mb4_general_ci"
+    if not _COLLATION_SAFE.match(collation):
+        raise AppError(
+            ErrorCode.INTERNAL,
+            f"非法 filename collation: {collation}",
+            http_status=500,
+        )
+    _filename_collation_cache = collation
+    return collation
+
+
+def _filenames_equal_under_collation(
+    db: Session, left: str, right: str, collation: str
+) -> bool:
+    """用列 collation 比较两个文件名是否相等（批内互比）。"""
+    result = db.execute(
+        text(f"SELECT :left COLLATE {collation} = :right COLLATE {collation}"),
+        {"left": left, "right": right},
+    ).scalar()
+    return bool(result)
+
+
+def _precheck_batch_file(
+    db: Session,
+    *,
+    filename: str,
+    data: bytes,
+    passed_names: list[str],
+    collation: str,
+) -> dict | None:
+    """单份预检；通过返回 None，否则返回 filename/reason/message。"""
+    safe_name = Path(filename).name
+    display = safe_name or (filename or "")
+
+    if not safe_name or safe_name in {".", ".."}:
+        return {
+            "filename": display,
+            "reason": "other",
+            "message": "非法文件名",
+        }
+
+    suffix = Path(safe_name).suffix.lower().lstrip(".")
+    if suffix not in ALLOWED_TYPES:
+        return {
+            "filename": safe_name,
+            "reason": "other",
+            "message": f"不支持的文件类型: .{suffix or '?'}",
+        }
+
+    size_bytes = len(data)
+    if size_bytes == 0:
+        return {
+            "filename": safe_name,
+            "reason": "other",
+            "message": "文件为空",
+        }
+
+    max_bytes = get_settings().INGEST_MAX_MB * 1024 * 1024
+    if size_bytes > max_bytes:
+        return {
+            "filename": safe_name,
+            "reason": "too_large",
+            "message": "超过上传大小上限",
+        }
+
+    exists = db.scalar(select(Document).where(Document.filename == safe_name))
+    if exists is not None:
+        return {
+            "filename": safe_name,
+            "reason": "duplicate",
+            "message": "同名文档已存在",
+        }
+
+    for prior in passed_names:
+        if _filenames_equal_under_collation(db, safe_name, prior, collation):
+            return {
+                "filename": safe_name,
+                "reason": "duplicate",
+                "message": "同名文档已存在",
+            }
+
+    return None
+
+
+def _map_ingest_process_reason(exc: AppError) -> str:
+    """将 ingest_upload 抛出的 AppError 映射为批内 reason。"""
+    if exc.code == ErrorCode.DOC_EXISTS:
+        return "duplicate"
+    if exc.code == ErrorCode.PAYLOAD_TOO_LARGE:
+        return "too_large"
+    if exc.code == ErrorCode.INGEST_FAILED:
+        # 空文本算解析失败；Embedding/Chroma/落盘被包成「入库失败:」算其他
+        if exc.message == "未能提取有效文本":
+            return "parse_failed"
+        if exc.message.startswith("入库失败:"):
+            return "other"
+        return "other"
+    return "other"
 
 
 def _cleanup_partial(
