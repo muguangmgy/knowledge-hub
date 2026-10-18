@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import logging
+
 from app.agent.logging_util import check_deadline
 from app.agent.tools.tencent import fetch_tencent_news
+from app.common.logging_util import event_msg
+
+logger = logging.getLogger(__name__)
 
 
 def news_analyst_node(state: dict) -> dict:
@@ -19,4 +24,5 @@ def news_analyst_node(state: dict) -> dict:
         items = fetch_tencent_news(code=str(code), limit=6, news_type=1)
         return {"news": items, "errors": []}
     except Exception as exc:
+        logger.warning(event_msg("news_analyst_node", err=exc))
         return {"news": None, "errors": [f"news_fetch_failed: {exc}"]}

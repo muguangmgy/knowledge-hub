@@ -22,7 +22,7 @@ def setup_app_logging() -> None:
 
 
 def event_msg(event: str, **fields: Any) -> str:
-    """拼一条规范业务日志：event=... k=v ..."""
+    """拼一条规范业务日志：event=<方法名> k=v ..."""
     parts = [f"event={event}"]
     for key, value in fields.items():
         if value is None:

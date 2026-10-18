@@ -267,7 +267,7 @@ def _yield_final(
     intent = state.get("intent") or {}
     logger.info(
         event_msg(
-            "research.stream_done",
+            "research_stream",
             route=out["route"] or "-",
             code=intent.get("asset_code") or "-",
             skip_analysts=bool(state.get("skip_analysts")),

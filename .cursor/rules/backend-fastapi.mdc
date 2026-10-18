@@ -67,6 +67,8 @@ async def chat_stream(...):
 ## 日志
 
 - 用 `logging.getLogger(__name__)`；文案经 `app.common.logging_util.event_msg`
-- 格式：`event=<域>.<动作> key=value`（如 `event=chat.ask_ok mode=rag user_id=1`）
+- 格式：`event=<方法名> key=value`（如 `event=_ask_rag mode=rag user_id=1`）；模块看 logger 名 `[app.services.chat]`
+- 启动预热例外：`lifespan` 内每步用步骤名当 event（`mysql` / `seed` / `ready`）
+- 同一函数多条日志靠级别和字段区分（如 `stage=`、`err=`），不再在 event 上加 `_ok` / `_failed`
 - 只打启动里程碑与关键业务结果（入库/删文档/登录注册/问答/投研/系统管理 CRUD）；不打密码、Token、长正文
 - INFO=成功里程碑；WARNING=降级；失败用 `logger.exception` 或带 `err=` 的 WARNING

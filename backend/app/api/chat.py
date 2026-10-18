@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.auth.deps import get_current_user
 from app.common.db import SessionLocal, get_db
+from app.common.logging_util import event_msg
 from app.common.response import ok
 from app.common.sse import format_sse, format_sse_ping
 from app.models.user import User
@@ -89,7 +90,7 @@ async def chat_stream(
                 if ev.get("event") in ("done", "error", "cancelled"):
                     return
         except Exception:
-            logger.exception("chat.stream_failed user_id=%s", user_id)
+            logger.exception(event_msg("chat_stream", user_id=user_id))
             event_q.put(
                 {
                     "event": "error",

@@ -73,7 +73,7 @@ def create_menu(
     db.add(menu)
     db.commit()
     db.refresh(menu)
-    logger.info(event_msg("menu.create_ok", menu_id=menu.id, name=menu.name))
+    logger.info(event_msg("create_menu", menu_id=menu.id, name=menu.name))
     return menu_to_node(menu)
 
 
@@ -127,7 +127,7 @@ def update_menu(
 
     db.commit()
     db.refresh(menu)
-    logger.info(event_msg("menu.update_ok", menu_id=menu.id))
+    logger.info(event_msg("update_menu", menu_id=menu.id))
     return menu_to_node(menu)
 
 
@@ -146,4 +146,4 @@ def delete_menu(db: Session, menu_id: int) -> None:
     db.execute(delete(RoleMenu).where(RoleMenu.menu_id == menu_id))
     db.delete(menu)
     db.commit()
-    logger.info(event_msg("menu.delete_ok", menu_id=menu_id))
+    logger.info(event_msg("delete_menu", menu_id=menu_id))

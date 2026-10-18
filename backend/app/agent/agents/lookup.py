@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+import logging
+
 from app.agent.logging_util import check_deadline
 from app.agent.tools.finance import build_finance_bundle
 from app.agent.tools.tencent import build_quote_bundle
+from app.common.logging_util import event_msg
+
+logger = logging.getLogger(__name__)
 
 
 def lookup_node(state: dict) -> dict:
@@ -27,6 +32,7 @@ def lookup_node(state: dict) -> dict:
     try:
         quote_data = build_quote_bundle(str(code))
     except Exception as exc:
+        logger.warning(event_msg("lookup_node", source="quote", err=exc))
         errors.append(f"quote_fetch_failed: {exc}")
 
     # 快照已到手但截止已过：留下行情，不再拉财务
@@ -37,6 +43,7 @@ def lookup_node(state: dict) -> dict:
     try:
         finance_data = build_finance_bundle(str(code))
     except Exception as exc:
+        logger.warning(event_msg("lookup_node", source="finance", err=exc))
         errors.append(f"finance_fetch_failed: {exc}")
 
     return {

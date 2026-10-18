@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import logging
 import time
 
 from app.agent.logging_util import check_deadline
 from app.agent.tools.email import is_valid_email, send_research_email
 from app.agent.tools.report_pdf import markdown_to_pdf_bytes, safe_pdf_filename
 from app.common.config import get_settings
+from app.common.logging_util import event_msg
+
+logger = logging.getLogger(__name__)
 
 
 def _resolve_to_addr(intent: dict) -> str | None:
@@ -63,7 +67,8 @@ def mailer_node(state: dict) -> dict:
     pdf_name = safe_pdf_filename(title)
     try:
         pdf_bytes = markdown_to_pdf_bytes(report)
-    except Exception:
+    except Exception as exc:
+        logger.warning(event_msg("mailer_node", err=exc))
         pdf_bytes = None
 
     plain_body = (
@@ -82,4 +87,5 @@ def mailer_node(state: dict) -> dict:
         )
         return finish(f"报告已发送至 {to_addr}", note=f"报告已发送至 {to_addr}。")
     except Exception as exc:
+        logger.warning(event_msg("mailer_node", err=exc))
         return finish(f"发送失败: {exc}", note=f"邮件发送失败：{exc}")

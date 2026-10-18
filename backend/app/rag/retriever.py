@@ -1,15 +1,20 @@
 from __future__ import annotations
 
+import logging
+import time
 from dataclasses import dataclass
 
 from app.common.config import get_settings
 from app.common.errors import AppError, ErrorCode
+from app.common.logging_util import event_msg
 from app.rag import bm25_store
 from app.rag.chroma_store import get_or_create_collection
 from app.rag.embedding import embed_texts
 
 # RRF 常数；越大则排名差的影响越小
 _RRF_K = 60
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -78,9 +83,20 @@ def retrieve(query: str, *, top_k: int | None = None) -> list[RetrievedChunk]:
     if not query:
         return []
 
+    t0 = time.perf_counter()
     vector_hits = _retrieve_vector(query, top_k=path_k)
     bm25_hits = bm25_store.search(query, top_k=path_k)
-    return _rrf_fuse(vector_hits, bm25_hits, final_k=final_k)
+    fused = _rrf_fuse(vector_hits, bm25_hits, final_k=final_k)
+    logger.info(
+        event_msg(
+            "retrieve",
+            vector_n=len(vector_hits),
+            bm25_n=len(bm25_hits),
+            fused_n=len(fused),
+            elapsed_ms=int((time.perf_counter() - t0) * 1000),
+        )
+    )
+    return fused
 
 
 def _retrieve_vector(query: str, *, top_k: int) -> list[RetrievedChunk]:

@@ -231,9 +231,9 @@ def _maybe_refresh_async() -> None:
                 return
             _save_to_redis(rows)
             _save_to_file(rows)
-            logger.info(event_msg("agent.symbol_refresh_ok", rows=len(rows)))
+            logger.info(event_msg("symbol_refresh", rows=len(rows)))
         except Exception as exc:
-            logger.warning(event_msg("agent.symbol_refresh_failed", err=exc))
+            logger.warning(event_msg("symbol_refresh", err=exc))
         finally:
             _refreshing = False
 

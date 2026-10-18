@@ -1,14 +1,18 @@
 from __future__ import annotations
 
+import logging
 import time
 
 from langchain_openai import OpenAIEmbeddings
 
 from app.common.config import get_settings
 from app.common.errors import AppError, ErrorCode
+from app.common.logging_util import event_msg
 
 _BATCH_SIZE = 16
 _MAX_RETRIES = 3
+
+logger = logging.getLogger(__name__)
 
 
 def embed_texts(texts: list[str]) -> list[list[float]]:
@@ -56,6 +60,14 @@ def _embed_batch(client: OpenAIEmbeddings, batch: list[str]) -> list[list[float]
         except Exception as exc:
             last_error = exc
             if attempt + 1 < _MAX_RETRIES:
+                logger.warning(
+                    event_msg(
+                        "_embed_batch",
+                        attempt=attempt + 1,
+                        batch_size=len(batch),
+                        err=exc,
+                    )
+                )
                 time.sleep(0.5 * (attempt + 1))
                 continue
             break

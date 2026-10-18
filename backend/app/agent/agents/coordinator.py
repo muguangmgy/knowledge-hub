@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from typing import Any
 
 from app.agent.logging_util import check_deadline
+from app.common.logging_util import event_msg
 from app.agent.tools.email import extract_email_from_text
 from app.agent.tools.research_context import get_research_context, set_research_context
 from app.agent.tools.symbol import extract_symbols_from_text, resolve_symbol
 from app.llm.client import chat_completion
+
+logger = logging.getLogger(__name__)
 
 _JSON_BLOCK = re.compile(r"\{[\s\S]*\}")
 _EMAIL_KEYWORDS = (
@@ -175,6 +179,17 @@ def _pack(
     }
     if extra:
         out.update(extra)
+    err = ";".join(errors) if errors else None
+    log = logger.warning if err else logger.info
+    log(
+        event_msg(
+            "coordinator_node",
+            route=route,
+            code=intent.get("asset_code") or "-",
+            want_email=int(bool(intent.get("want_email"))),
+            err=err,
+        )
+    )
     return out
 
 

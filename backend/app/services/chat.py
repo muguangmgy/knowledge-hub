@@ -85,7 +85,7 @@ def delete_conversation(db: Session, user: User, conversation_id: int) -> None:
     delete_research_context(conversation_id)
     logger.info(
         event_msg(
-            "chat.conversation_delete_ok",
+            "delete_conversation",
             user_id=user.id,
             conversation_id=conversation_id,
             mode=mode,
@@ -289,7 +289,7 @@ def _ask_direct(
         _commit_fail_assistant(db, conv)
         logger.warning(
             event_msg(
-                "chat.ask_failed",
+                "_ask_direct",
                 mode="direct",
                 user_id=user.id,
                 conversation_id=conv.id,
@@ -301,7 +301,7 @@ def _ask_direct(
     assistant = _commit_assistant(db, conv, answer, citations=None)
     logger.info(
         event_msg(
-            "chat.ask_ok",
+            "_ask_direct",
             mode="direct",
             route=result.get("route") or "-",
             user_id=user.id,
@@ -358,7 +358,7 @@ def _ask_direct_stream(
                 assistant = _commit_assistant(db, conv, answer, citations=None)
                 logger.info(
                     event_msg(
-                        "chat.ask_ok",
+                        "_ask_direct_stream",
                         mode="direct",
                         route=result.get("route") or "-",
                         user_id=user.id,
@@ -391,7 +391,7 @@ def _ask_direct_stream(
         assistant = _commit_fail_assistant(db, conv)
         logger.warning(
             event_msg(
-                "chat.ask_failed",
+                "_ask_direct_stream",
                 mode="direct",
                 user_id=user.id,
                 conversation_id=conv.id,
@@ -434,7 +434,7 @@ def _ask_rag(
     except AppError as exc:
         logger.warning(
             event_msg(
-                "chat.ask_failed",
+                "_ask_rag",
                 mode="rag",
                 user_id=user.id,
                 conversation_id=conv.id,
@@ -461,7 +461,7 @@ def _ask_rag(
             _commit_fail_assistant(db, conv)
             logger.warning(
                 event_msg(
-                    "chat.ask_failed",
+                    "_ask_rag",
                     mode="rag",
                     user_id=user.id,
                     conversation_id=conv.id,
@@ -476,7 +476,7 @@ def _ask_rag(
     )
     logger.info(
         event_msg(
-            "chat.ask_ok",
+            "_ask_rag",
             mode="rag",
             user_id=user.id,
             conversation_id=conv.id,
@@ -523,7 +523,7 @@ def _ask_rag_stream(
     except AppError as exc:
         logger.warning(
             event_msg(
-                "chat.ask_failed",
+                "_ask_rag_stream",
                 mode="rag",
                 user_id=user.id,
                 conversation_id=conv.id,
@@ -552,7 +552,7 @@ def _ask_rag_stream(
         )
         logger.info(
             event_msg(
-                "chat.ask_ok",
+                "_ask_rag_stream",
                 mode="rag",
                 user_id=user.id,
                 conversation_id=conv.id,
@@ -597,7 +597,7 @@ def _ask_rag_stream(
         assistant = _commit_fail_assistant(db, conv)
         logger.warning(
             event_msg(
-                "chat.ask_failed",
+                "_ask_rag_stream",
                 mode="rag",
                 user_id=user.id,
                 conversation_id=conv.id,
@@ -622,7 +622,7 @@ def _ask_rag_stream(
     assistant = _commit_assistant(db, conv, answer, citations=citations or None)
     logger.info(
         event_msg(
-            "chat.ask_ok",
+            "_ask_rag_stream",
             mode="rag",
             user_id=user.id,
             conversation_id=conv.id,

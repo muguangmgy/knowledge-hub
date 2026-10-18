@@ -30,7 +30,7 @@ def get_redis():
         client.ping()
         return client
     except Exception as exc:
-        logger.warning(event_msg("redis.unavailable", err=exc))
+        logger.warning(event_msg("get_redis", err=exc))
         return None
 
 

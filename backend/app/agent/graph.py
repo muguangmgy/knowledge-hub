@@ -139,7 +139,7 @@ def run_research_graph(
         except FuturesTimeoutError:
             logger.warning(
                 event_msg(
-                    "research.timeout",
+                    "run_research_graph",
                     timeout_sec=timeout_sec,
                     elapsed_ms=int((time.perf_counter() - t0) * 1000),
                 )
@@ -161,7 +161,7 @@ def run_research_graph(
     intent = final.get("intent") or {}
     logger.info(
         event_msg(
-            "research.done",
+            "run_research_graph",
             route=out["route"] or "-",
             code=intent.get("asset_code") or "-",
             skip_analysts=bool(final.get("skip_analysts")),

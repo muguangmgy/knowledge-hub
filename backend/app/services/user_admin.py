@@ -114,7 +114,7 @@ def create_user(
     _replace_user_roles(db, user.id, role_ids or [])
     db.commit()
     db.refresh(user)
-    logger.info(event_msg("user.create_ok", user_id=user.id, username=user.username))
+    logger.info(event_msg("create_user", user_id=user.id, username=user.username))
     return _serialize_user(db, user)
 
 
@@ -150,7 +150,7 @@ def update_user(
 
     db.commit()
     db.refresh(user)
-    logger.info(event_msg("user.update_ok", user_id=user.id))
+    logger.info(event_msg("update_user", user_id=user.id))
     return _serialize_user(db, user)
 
 
@@ -164,4 +164,4 @@ def delete_user(db: Session, *, actor_id: int, user_id: int) -> None:
     db.execute(delete(UserRole).where(UserRole.user_id == user_id))
     db.delete(user)
     db.commit()
-    logger.info(event_msg("user.delete_ok", user_id=user_id))
+    logger.info(event_msg("delete_user", user_id=user_id))

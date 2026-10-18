@@ -24,7 +24,7 @@ def _client():
 
     client = get_redis()
     if client is None:
-        logger.warning(event_msg("research.context_unavailable", reason="no_redis"))
+        logger.warning(event_msg("research_context", reason="no_redis"))
     return client
 
 
@@ -39,14 +39,14 @@ def get_research_context(conversation_id: int | None) -> dict | None:
     try:
         raw = client.get(key)
     except Exception as exc:
-        logger.warning(event_msg("research.context_unavailable", op="get", err=exc))
+        logger.warning(event_msg("get_research_context", op="get", err=exc))
         return None
     if not raw:
         return None
     try:
         data = json.loads(raw)
     except Exception as exc:
-        logger.warning(event_msg("research.context_unavailable", op="parse", err=exc))
+        logger.warning(event_msg("get_research_context", op="parse", err=exc))
         return None
     if not isinstance(data, dict):
         return None
@@ -57,7 +57,7 @@ def get_research_context(conversation_id: int | None) -> dict | None:
     try:
         client.expire(key, _TTL_SEC)
     except Exception as exc:
-        logger.warning(event_msg("research.context_unavailable", op="expire", err=exc))
+        logger.warning(event_msg("get_research_context", op="expire", err=exc))
     return {"code": code, "name": name}
 
 
@@ -86,7 +86,7 @@ def set_research_context(
         client.set(key, payload)
         client.expire(key, _TTL_SEC)
     except Exception as exc:
-        logger.warning(event_msg("research.context_unavailable", op="set", err=exc))
+        logger.warning(event_msg("set_research_context", op="set", err=exc))
 
 
 def delete_research_context(conversation_id: int | None) -> None:
@@ -99,4 +99,4 @@ def delete_research_context(conversation_id: int | None) -> None:
     try:
         client.delete(_key(int(conversation_id)))
     except Exception as exc:
-        logger.warning(event_msg("research.context_unavailable", op="delete", err=exc))
+        logger.warning(event_msg("delete_research_context", op="delete", err=exc))

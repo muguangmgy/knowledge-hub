@@ -86,7 +86,7 @@ def create_role(
     _replace_role_menus(db, role.id, menu_ids or [])
     db.commit()
     db.refresh(role)
-    logger.info(event_msg("role.create_ok", role_id=role.id, code=role.code))
+    logger.info(event_msg("create_role", role_id=role.id, code=role.code))
     return _serialize_role(db, role, with_menus=True)
 
 
@@ -110,7 +110,7 @@ def update_role(
         _replace_role_menus(db, role.id, menu_ids)
     db.commit()
     db.refresh(role)
-    logger.info(event_msg("role.update_ok", role_id=role.id))
+    logger.info(event_msg("update_role", role_id=role.id))
     return _serialize_role(db, role, with_menus=True)
 
 
@@ -125,4 +125,4 @@ def delete_role(db: Session, role_id: int) -> None:
     db.execute(delete(UserRole).where(UserRole.role_id == role_id))
     db.delete(role)
     db.commit()
-    logger.info(event_msg("role.delete_ok", role_id=role_id))
+    logger.info(event_msg("delete_role", role_id=role_id))

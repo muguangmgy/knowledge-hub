@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import logging
+
 from app.agent.logging_util import check_deadline
 from app.agent.tools.tencent import build_market_bundle
+from app.common.logging_util import event_msg
+
+logger = logging.getLogger(__name__)
 
 
 def market_analyst_node(state: dict) -> dict:
@@ -19,4 +24,5 @@ def market_analyst_node(state: dict) -> dict:
         data = build_market_bundle(code=str(code))
         return {"market_data": data, "errors": []}
     except Exception as exc:
+        logger.warning(event_msg("market_analyst_node", err=exc))
         return {"market_data": None, "errors": [f"market_fetch_failed: {exc}"]}

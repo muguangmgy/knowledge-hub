@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import logging
+
 from app.agent.logging_util import check_deadline
 from app.agent.tools.tencent import build_quote_bundle
+from app.common.logging_util import event_msg
+
+logger = logging.getLogger(__name__)
 
 
 def quote_analyst_node(state: dict) -> dict:
@@ -19,4 +24,5 @@ def quote_analyst_node(state: dict) -> dict:
         data = build_quote_bundle(str(code))
         return {"quote_data": data, "errors": []}
     except Exception as exc:
+        logger.warning(event_msg("quote_analyst_node", err=exc))
         return {"quote_data": None, "errors": [f"quote_fetch_failed: {exc}"]}

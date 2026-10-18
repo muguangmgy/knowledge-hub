@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import json
+import logging
+import time
 import urllib.error
 import urllib.request
 
 from app.common.config import get_settings
 from app.common.errors import AppError, ErrorCode
+from app.common.logging_util import event_msg
 from app.rag.retriever import RetrievedChunk
+
+logger = logging.getLogger(__name__)
 
 
 def rerank_chunks(
@@ -38,6 +43,8 @@ def rerank_chunks(
     relative_ratio = settings.RAG_RERANK_RELATIVE_RATIO
     keep_top1_floor = settings.RAG_RERANK_KEEP_TOP1_FLOOR
     titles = titles or {}
+    in_n = len(chunks)
+    t0 = time.perf_counter()
 
     api_key = (settings.RERANK_API_KEY or settings.EMBEDDING_API_KEY or "").strip()
     if not api_key:
@@ -102,11 +109,22 @@ def rerank_chunks(
         parsed.append((chunks[idx], score))
     parsed.sort(key=lambda x: x[1], reverse=True)
 
-    ranked, _scores = _apply_score_gate(
+    ranked, _scores, kept_top1 = _apply_score_gate(
         parsed,
         min_score=min_score,
         relative_ratio=relative_ratio,
         keep_top1_floor=keep_top1_floor,
+    )
+    top1_score = parsed[0][1] if parsed else None
+    logger.info(
+        event_msg(
+            "rerank_chunks",
+            in_n=in_n,
+            out_n=len(ranked),
+            top1_score=round(top1_score, 4) if top1_score is not None else None,
+            kept_top1=1 if kept_top1 else None,
+            elapsed_ms=int((time.perf_counter() - t0) * 1000),
+        )
     )
     return ranked
 
@@ -117,10 +135,10 @@ def _apply_score_gate(
     min_score: float,
     relative_ratio: float,
     keep_top1_floor: float,
-) -> tuple[list[RetrievedChunk], list[float]]:
+) -> tuple[list[RetrievedChunk], list[float], bool]:
     """精排分数门控：绝对软地板 + 相对落差；空则按地板兜底 Top1。"""
     if not parsed:
-        return [], []
+        return [], [], False
 
     top1_score = parsed[0][1]
     relative_cut = top1_score * relative_ratio
@@ -135,12 +153,14 @@ def _apply_score_gate(
         ranked.append(chunk)
         scores.append(score)
 
+    kept_top1 = False
     if not ranked and parsed[0][1] >= keep_top1_floor:
         top_chunk, top_score = parsed[0]
         ranked = [top_chunk]
         scores = [top_score]
+        kept_top1 = True
 
-    return ranked, scores
+    return ranked, scores, kept_top1
 
 
 def _doc_text(title: str, heading_path: str, content: str) -> str:

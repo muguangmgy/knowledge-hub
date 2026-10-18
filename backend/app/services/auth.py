@@ -41,7 +41,7 @@ def register_user(db: Session, *, username: str, password: str) -> User:
         db.add(UserRole(user_id=user.id, role_id=role.id))
         db.commit()
     db.refresh(user)
-    logger.info(event_msg("auth.register_ok", user_id=user.id, username=user.username))
+    logger.info(event_msg("register_user", user_id=user.id, username=user.username))
     return user
 
 
@@ -54,7 +54,7 @@ def login_user(db: Session, *, username: str, password: str) -> dict:
         raise AppError(ErrorCode.UNAUTHORIZED, "用户已禁用", http_status=401)
 
     token = create_access_token(user_id=user.id, username=user.username)
-    logger.info(event_msg("auth.login_ok", user_id=user.id, username=user.username))
+    logger.info(event_msg("login_user", user_id=user.id, username=user.username))
     return {
         "accessToken": token,
         "tokenType": "Bearer",

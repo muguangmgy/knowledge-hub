@@ -23,7 +23,7 @@ from app.common.response import fail, ok
 # 导入 models 才能把各表注册进 Base.metadata；否则 create_all 建不出表
 import app.models  # noqa: F401
 
-# 尽早挂日志，后面的 startup.* event 才能打到控制台
+# 尽早挂日志，后面的启动步骤才能打到控制台
 setup_app_logging()
 logger = logging.getLogger(__name__)
 
@@ -39,12 +39,11 @@ async def lifespan(_app: FastAPI):
 
     步骤：MySQL 探活 → 建表 → 种子 → Chroma → BM25 全量重建 → A 股代码表预热。
     前几步失败会让进程起不来；代码表预热失败只打 WARNING，不挡启动。
-    各步成功日志带 elapsed_ms；startup.ready 带总耗时。
+    各步成功日志 event 为步骤名并带 elapsed_ms；ready 带总耗时。
     yield 之后进入运行态；当前关闭阶段无额外清理。
     """
     settings = get_settings()
     boot_t0 = time.perf_counter()
-    logger.info(event_msg("startup.begin"))
 
     # 原文上传落盘目录（路径已锚定到 backend 根）
     settings.kb_dir.mkdir(parents=True, exist_ok=True)
@@ -52,22 +51,22 @@ async def lifespan(_app: FastAPI):
     # MySQL 连不上则直接失败，避免半残状态接流量
     t0 = time.perf_counter()
     ping_mysql()
-    logger.info(event_msg("startup.mysql_ok", elapsed_ms=_elapsed_ms(t0)))
+    logger.info(event_msg("mysql", elapsed_ms=_elapsed_ms(t0)))
 
     # 按 ORM 元数据补建缺失表；已有表不会做破坏性变更
     t0 = time.perf_counter()
     Base.metadata.create_all(bind=engine)
-    logger.info(event_msg("startup.db_schema_ok", elapsed_ms=_elapsed_ms(t0)))
+    logger.info(event_msg("db_schema", elapsed_ms=_elapsed_ms(t0)))
 
     # 幂等写入默认账号 / 角色 / 菜单等；失败回滚并阻止启动
     db = SessionLocal()
     try:
         t0 = time.perf_counter()
         run_seed(db)
-        logger.info(event_msg("startup.seed_ok", elapsed_ms=_elapsed_ms(t0)))
+        logger.info(event_msg("seed", elapsed_ms=_elapsed_ms(t0)))
     except Exception:
         db.rollback()
-        logger.exception(event_msg("startup.seed_failed"))
+        logger.exception(event_msg("seed"))
         raise
     finally:
         db.close()
@@ -75,13 +74,7 @@ async def lifespan(_app: FastAPI):
     # 向量库客户端；后续入库与 RAG 检索依赖这里初始化成功
     t0 = time.perf_counter()
     open_chroma(settings)
-    logger.info(
-        event_msg(
-            "startup.chroma_ok",
-            path=settings.chroma_dir,
-            elapsed_ms=_elapsed_ms(t0),
-        )
-    )
+    logger.info(event_msg("chroma", elapsed_ms=_elapsed_ms(t0)))
 
     # BM25 关键词索引：每次启动从 MySQL 全量重建，与已入库切片对齐
     from app.rag import bm25_store
@@ -90,9 +83,7 @@ async def lifespan(_app: FastAPI):
     try:
         t0 = time.perf_counter()
         n = bm25_store.rebuild_from_db(bm25_db)
-        logger.info(
-            event_msg("startup.bm25_ok", chunks=n, elapsed_ms=_elapsed_ms(t0))
-        )
+        logger.info(event_msg("bm25", chunks=n, elapsed_ms=_elapsed_ms(t0)))
     finally:
         bm25_db.close()
 
@@ -102,17 +93,11 @@ async def lifespan(_app: FastAPI):
 
         t0 = time.perf_counter()
         rows = warm_symbol_cache()
-        logger.info(
-            event_msg(
-                "startup.symbol_warm_ok",
-                rows=rows,
-                elapsed_ms=_elapsed_ms(t0),
-            )
-        )
+        logger.info(event_msg("symbol_warm", rows=rows, elapsed_ms=_elapsed_ms(t0)))
     except Exception as exc:
-        logger.warning(event_msg("startup.symbol_warm_failed", err=exc))
+        logger.warning(event_msg("symbol_warm", err=exc))
 
-    logger.info(event_msg("startup.ready", elapsed_ms=_elapsed_ms(boot_t0)))
+    logger.info(event_msg("ready", elapsed_ms=_elapsed_ms(boot_t0)))
     yield
 
 
