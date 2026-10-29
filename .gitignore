@@ -20,6 +20,7 @@ coverage/
 
 # Local design docs (not published with the repo)
 # .docs/
+.docs/resume.pdf
 
 # Local scratch (not published with the repo)
 tests/
