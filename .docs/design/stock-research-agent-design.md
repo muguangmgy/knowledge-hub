@@ -1,4 +1,4 @@
-# Knowledge Hub — 股票投研 Multi-Agent 技术方案设计文档
+﻿# Knowledge Hub — 股票投研 Multi-Agent 技术方案设计文档
 
 - **日期**：2026-10-14
 - **状态**：已实现
@@ -129,9 +129,9 @@ backend/app/agent/          # 勿再建顶层 app/graph/；拓扑即本包内 gr
 
 | 模块 | 变更 |
 |------|------|
-| [`chat.py`](../backend/app/services/chat.py) | `_ask_direct` → `run_research_graph` |
-| [`qa.py`](../backend/app/services/qa.py) | 废弃 `generate_direct_answer` / `DIRECT_SYSTEM` |
-| [`llm/client.py`](../backend/app/llm/client.py) | 供 Coordinator、Writer |
+| [`chat.py`](../../backend/app/services/chat.py) | `_ask_direct` → `run_research_graph` |
+| [`qa.py`](../../backend/app/services/qa.py) | 废弃 `generate_direct_answer` / `DIRECT_SYSTEM` |
+| [`llm/client.py`](../../backend/app/llm/client.py) | 供 Coordinator、Writer |
 | API / RAG | 不改 |
 
 ### 4.3 `_ask_direct` 与 `run_research_graph`

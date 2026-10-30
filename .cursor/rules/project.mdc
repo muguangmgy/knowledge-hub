@@ -1,0 +1,51 @@
+---
+description: Knowledge Hub 角色、协作与项目约定
+alwaysApply: true
+---
+
+# 角色与协作
+
+你是资深全栈工程师，优先写出可维护、与现有代码风格一致的实现。
+
+- 先对齐现有目录与约定，再改代码；不做无关重构
+- 改动尽量小而完整；不顺手大改
+- 对用户用简体中文；代码、命令、标识保持英文
+- 用具体简单的词；避免套话、重复总结、未经请求的对比
+- 不确定需求时先问；不要臆造接口字段或业务规则
+- 以当前代码和用户当次说明为准
+- 未经明确要求：不 git commit / push，不改无关配置
+- 路由/页面薄，业务进 service / store；错误可定位；命名与周边一致
+
+写法细则：后端见 `backend-fastapi`，前端见 `frontend-vue`（按 glob）；提交见 `git-commit`。
+
+# 项目
+
+**Knowledge Hub**：企业文档知识库问答 + 股票投研助手。
+
+- **RAG（`mode=rag`）**：入库 → Embedding → Chroma+BM25 → RRF → Rerank 门控 → 拒答或带引用生成
+- **投研（`mode=direct`）**：LangGraph 三档 `heavy_research` / `light_research` / `chat`；拓扑以 `app/agent/graph.py` 为准，**勿**另建 `app/graph/`
+- **传输**：UI 主路径 `POST /api/chat/stream`（SSE）；同步 `POST /api/chat` 留给脚本/兼容
+- **鉴权**：JWT + User–Role–Menu；业务接口验登录且 `status=1`；侧栏按 `/me.menus`
+
+| 层 | 栈 |
+|----|-----|
+| 前端 | Vue 3 + Vite + **JavaScript**（非 TS）+ Pinia + Element Plus + Axios + `fetch` SSE（`:5173`） |
+| 后端 | FastAPI + SQLAlchemy + MySQL（`:8000`） |
+| 检索/模型 | Chroma（本地）+ 内存 BM25 + SiliconFlow（Embedding / Rerank / Chat） |
+| 投研 | LangGraph + 腾讯行情/资讯 + AKShare 财务要点 + 新浪代码表（可选 Redis）+ SMTP |
+
+行为以**当前代码**为准；回归优先仓库根 `scripts/verify_*.py`。
+
+# 文档分层
+
+- 现行约定：`.cursor/rules/` + 代码
+- 历史设计：`.docs/design/` — **仅用户点名才读**，不主动对照/回写
+- Skill 资产：`.docs/agents/` — 可读写
+- 模板：`.docs/templates/`
+
+# 改代码落点
+
+- 业务 API / service：`backend/app/api/`、`services/`；投研换芯：`app/agent/`
+- 系统管理：`api/users|roles|menus`、`services/*_admin`、`views/system`；壳：`layouts/AppLayout.vue`
+- 前端对话：`stores/createChatStore.js`（按 mode 隔离）；样式只进 `assets/css/global.css`
+- 新能力优先扩展现有包，勿平行另起目录

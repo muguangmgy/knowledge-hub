@@ -2,6 +2,8 @@
 
 Issues and specs for this repo live as markdown files in `.scratch/`.
 
+> 本仓库默认可不使用 `.scratch/`。`/code-review` 时由用户在对话中给出规格即可；没有规格则 Spec 轴跳过。
+
 ## Conventions
 
 - One feature per directory: `.scratch/<feature-slug>/`

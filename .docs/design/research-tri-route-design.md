@@ -1,4 +1,4 @@
-# Knowledge Hub — 投研助手三档路由技术方案设计文档
+﻿# Knowledge Hub — 投研助手三档路由技术方案设计文档
 
 - **日期**：2026-10-16
 - **状态**：已实现
@@ -157,9 +157,9 @@ backend/app/agent/
 
 | 模块 | 变更 |
 |------|------|
-| [`services/chat.py`](../backend/app/services/chat.py) | `_ask_direct` / stream：传 `conversation_id`、最近 6 条；日志 `route=` |
-| [`agent/graph.py`](../backend/app/agent/graph.py) | `run_research_graph(user_input, *, conversation_id, history_messages=...)` |
-| [`agent/stream.py`](../backend/app/agent/stream.py) | 同上参数；三档增量执行 |
+| [`services/chat.py`](../../backend/app/services/chat.py) | `_ask_direct` / stream：传 `conversation_id`、最近 6 条；日志 `route=` |
+| [`agent/graph.py`](../../backend/app/agent/graph.py) | `run_research_graph(user_input, *, conversation_id, history_messages=...)` |
+| [`agent/stream.py`](../../backend/app/agent/stream.py) | 同上参数；三档增量执行 |
 | API / RAG / mode 外壳 | 不改 |
 
 ---
@@ -219,7 +219,7 @@ backend/app/agent/
 2. Redis 未配置或未命中 → `chat`（可澄清「你指哪只股票」）；**降级不 500**  
 3. **纯解析失败**才落 chat：话术点了名字/代码，但代码表校验失败，且 `continues_previous=false`（如「分析苹果」）。ChatNode 说明主要覆盖 A 股，**不编造行情数字**。不加第四档  
 
-标的解析仍走 [`symbol.py`](../backend/app/agent/tools/symbol.py) 校验；**不信 LLM 裸代码**（代码必须出现在用户原文里才接受）。
+标的解析仍走 [`symbol.py`](../../backend/app/agent/tools/symbol.py) 校验；**不信 LLM 裸代码**（代码必须出现在用户原文里才接受）。
 
 **抬档与发信的否定（拍板）**：
 
@@ -245,7 +245,7 @@ backend/app/agent/
 
 ### 5.3 Redis 会话上下文
 
-[`tools/research_context.py`](../backend/app/agent/tools/research_context.py)：
+[`tools/research_context.py`](../../backend/app/agent/tools/research_context.py)：
 
 | 项 | 约定 |
 |----|------|
@@ -256,7 +256,7 @@ backend/app/agent/
 | 不写 | `chat`（避免闲聊污染标的槽） |
 | 降级 | 无 `REDIS_URL` / 读写失败 → 当作无上一只；打 WARNING；不抛业务 500 |
 
-与代码表缓存 Redis（[`symbol.py`](../backend/app/agent/tools/symbol.py)）共用 `REDIS_URL`，key 空间分离。
+与代码表缓存 Redis（[`symbol.py`](../../backend/app/agent/tools/symbol.py)）共用 `REDIS_URL`，key 空间分离。
 
 ---
 

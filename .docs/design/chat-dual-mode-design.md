@@ -1,4 +1,4 @@
-# Knowledge Hub — 双模式对话技术方案设计文档
+﻿# Knowledge Hub — 双模式对话技术方案设计文档
 
 - **日期**：2026-10-14
 - **状态**：已实现（外壳仍有效；`direct` 内核已由投研取代）
@@ -94,7 +94,7 @@ flowchart TD
 | `kh_user_role` | `sys_user_role` |
 | `kh_role_permission` | `sys_role_permission`（**历史**；现网已废弃） |
 
-> **现网 RBAC**：User–Role–Menu（`sys_menu` / `sys_role_menu`）；旧库可用 [`scripts/migrate_rbac_menu.py`](../scripts/migrate_rbac_menu.py) DROP 权限表。
+> **现网 RBAC**：User–Role–Menu（`sys_menu` / `sys_role_menu`）；旧库可用 [`scripts/migrate_rbac_menu.py`](../../scripts/migrate_rbac_menu.py) DROP 权限表。
 
 **业务表**（去掉 `kh_`）：
 
@@ -107,7 +107,7 @@ flowchart TD
 
 **非 MySQL**：Chroma collection 仍为 `kh_chunks`（不改）。
 
-**ORM / 迁移**：[`backend/app/models/`](../backend/app/models/) 的 `__tablename__` 与上表一致；存量库执行 [`scripts/migrate_chat_dual_mode.py`](../scripts/migrate_chat_dual_mode.py)（幂等）。`create_all` 不会自动 rename，必须跑迁移脚本。
+**ORM / 迁移**：[`backend/app/models/`](../../backend/app/models/) 的 `__tablename__` 与上表一致；存量库执行 [`scripts/migrate_chat_dual_mode.py`](../../scripts/migrate_chat_dual_mode.py)（幂等）。`create_all` 不会自动 rename，必须跑迁移脚本。
 
 ### 4.1 `conversation` 变更（加 `mode`）
 
@@ -145,7 +145,7 @@ flowchart TD
 
 ### 5.1 `POST /api/chat`
 
-**请求体**（扩展 [`ChatRequest`](../backend/app/schemas/chat.py)）：
+**请求体**（扩展 [`ChatRequest`](../../backend/app/schemas/chat.py)）：
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
@@ -180,7 +180,7 @@ flowchart TD
 
 排序仍按 `updated_at` 倒序；仅本人。
 
-**兼容说明（已拍板）**：现网前端 [`listConversations`](../frontend/src/api/chat.js) **不传** `mode`。若「不传返回全部」，旧前端列表会混入 `direct` 会话并可能误开导致混聊 `40001`。因此列表接口与 `POST /api/chat` 对齐：**不传 `mode` → 只返回 `rag` 会话**。新前端两套入口均**显式**传 `mode=rag` 或 `mode=direct`。本规格不提供「一次返回全部模式」的列表能力；调试需要时分两次请求即可。非法 `mode` 查询值同 §5.4 报 `40001`。
+**兼容说明（已拍板）**：现网前端 [`listConversations`](../../frontend/src/api/chat.js) **不传** `mode`。若「不传返回全部」，旧前端列表会混入 `direct` 会话并可能误开导致混聊 `40001`。因此列表接口与 `POST /api/chat` 对齐：**不传 `mode` → 只返回 `rag` 会话**。新前端两套入口均**显式**传 `mode=rag` 或 `mode=direct`。本规格不提供「一次返回全部模式」的列表能力；调试需要时分两次请求即可。非法 `mode` 查询值同 §5.4 报 `40001`。
 
 ### 5.3 其余会话 API
 
@@ -198,7 +198,7 @@ flowchart TD
 | 会话不存在 / 非本人 | 沿用 `40401` |
 | LLM / Embedding 失败 | 沿用 `50010`（`direct` 仅 LLM；`rag` 同现网） |
 
-实现顺序：先规范化「字段缺失或 `null` → `rag`」，再校验「已解析的非空字符串是否属于枚举」；**缺省 / `null` 不得走进非法分支**。在 [`ErrorCode`](../backend/app/common/errors.py) 增加 `BAD_REQUEST = 40001`（或等价命名），勿复用 `INTERNAL` 表达参数错误。列表 Query 的 `mode` 缺省同理（§5.2 → 按 `rag` 过滤）。
+实现顺序：先规范化「字段缺失或 `null` → `rag`」，再校验「已解析的非空字符串是否属于枚举」；**缺省 / `null` 不得走进非法分支**。在 [`ErrorCode`](../../backend/app/common/errors.py) 增加 `BAD_REQUEST = 40001`（或等价命名），勿复用 `INTERNAL` 表达参数错误。列表 Query 的 `mode` 缺省同理（§5.2 → 按 `rag` 过滤）。
 
 ---
 
@@ -208,14 +208,14 @@ flowchart TD
 
 | 文件 | 改动 |
 |------|------|
-| [`user.py`](../backend/app/models/user.py)、[`rbac.py`](../backend/app/models/rbac.py) | `__tablename__` → `sys_*`；注释同步（§4.0） |
+| [`user.py`](../../backend/app/models/user.py)、[`rbac.py`](../../backend/app/models/rbac.py) | `__tablename__` → `sys_*`；注释同步（§4.0） |
 | 其余 models（document/chunk/conversation/message） | **表名不动**；仅 conversation 增加 `mode`；注释里若引用用户表则改为 `sys_user` |
-| [`backend/app/schemas/chat.py`](../backend/app/schemas/chat.py) | `ChatRequest.mode`；可选 Literal / 校验 |
-| [`backend/app/api/chat.py`](../backend/app/api/chat.py) | 传入 `mode`；列表接收 `mode` Query |
-| [`backend/app/services/chat.py`](../backend/app/services/chat.py) | 懒建写 mode；续聊校验；`list_conversations` 过滤；`ask` 分支 |
-| [`backend/app/services/qa.py`](../backend/app/services/qa.py) | `rag`：生成不拼接 history；原 `generate_direct_answer` 已由投研图取代（见 stock-research） |
-| [`backend/app/agent/`](../backend/app/agent/) | `mode=direct` 现网实现：LangGraph 固定拓扑 |
-| [`backend/app/common/errors.py`](../backend/app/common/errors.py) | `BAD_REQUEST = 40001` |
+| [`backend/app/schemas/chat.py`](../../backend/app/schemas/chat.py) | `ChatRequest.mode`；可选 Literal / 校验 |
+| [`backend/app/api/chat.py`](../../backend/app/api/chat.py) | 传入 `mode`；列表接收 `mode` Query |
+| [`backend/app/services/chat.py`](../../backend/app/services/chat.py) | 懒建写 mode；续聊校验；`list_conversations` 过滤；`ask` 分支 |
+| [`backend/app/services/qa.py`](../../backend/app/services/qa.py) | `rag`：生成不拼接 history；原 `generate_direct_answer` 已由投研图取代（见 stock-research） |
+| [`backend/app/agent/`](../../backend/app/agent/) | `mode=direct` 现网实现：LangGraph 固定拓扑 |
+| [`backend/app/common/errors.py`](../../backend/app/common/errors.py) | `BAD_REQUEST = 40001` |
 | DB | 系统表 → `sys_*`；业务表去 `kh_`；`conversation` 表末尾加 `mode`（§4.0 / §4.1） |
 
 ### 6.1 `ask` 分支逻辑（摘要）
@@ -236,7 +236,7 @@ flowchart TD
 
 | 模式 | System / 内核 |
 |------|--------|
-| rag | 保持现有企业知识库助手 + 引用规范（[`qa.py`](../backend/app/services/qa.py)） |
+| rag | 保持现有企业知识库助手 + 引用规范（[`qa.py`](../../backend/app/services/qa.py)） |
 | direct | 投研 Writer/Coordinator 使用现有 `LLM_*`；见投研文档（原闲聊 system 已废止） |
 
 本阶段不强制独立配置键；后续若需再拆 `LLM_TEMPERATURE` 等。
@@ -271,7 +271,7 @@ flowchart TD
 
 | 模式 | 建议路径 |
 |------|----------|
-| rag | 现有 [`ChatView.vue`](../frontend/src/views/chat/ChatView.vue) + [`stores/chat.js`](../frontend/src/stores/chat.js)（固定 `mode: 'rag'`） |
+| rag | 现有 [`ChatView.vue`](../../frontend/src/views/chat/ChatView.vue) + [`stores/chat.js`](../../frontend/src/stores/chat.js)（固定 `mode: 'rag'`） |
 | direct | 新增如 `views/chat/DirectChatView.vue` + `stores/directChat.js`（固定 `mode: 'direct'`） |
 
 可复用组件：`ChatInput`、消息气泡列表。direct 空态文案单独一套（投研示例话术）；助手消息 Markdown 安全渲染。
@@ -282,7 +282,7 @@ flowchart TD
 
 ### 7.3 API 调用
 
-[`frontend/src/api/chat.js`](../frontend/src/api/chat.js)：
+[`frontend/src/api/chat.js`](../../frontend/src/api/chat.js)：
 
 - **UI 主路径** `askChatStream`（`POST /api/chat/stream`）：body 带 `mode`；见 [chat-sse-design.md](./chat-sse-design.md)
 - 同步 `askChat`（`POST /api/chat`）：保留脚本/兼容；timeout 120000

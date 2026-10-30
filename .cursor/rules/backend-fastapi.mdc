@@ -6,7 +6,7 @@ alwaysApply: false
 
 # Backend（FastAPI）
 
-目录地图与产品能力见 `project-overview` 和当前代码；本规则只约束**怎么写后端**。不主动对照 `.docs/`。
+产品能力与落点见 `project`；本规则只约束**怎么写后端**。
 
 ## 注释
 
@@ -21,7 +21,7 @@ alwaysApply: false
 - `app/services/`：业务与事务；抛 `AppError`；命名：领域用短名（`auth`/`chat`），系统管理用 `*_admin`（另有 `menu_tree`）
 - `app/schemas/`：请求/响应 Pydantic（如 `auth`/`chat`/`system`）；勿把校验模型堆进 api
 - `app/models/`：SQLAlchemy 表模型；开关字段 `status` / `visible` 为 `SmallInteger`（`1`=正常/显示，`0`=禁用/隐藏）；鉴权验 `status == 1`
-- 支撑：`auth/`（deps/security/seed）、`ingest/`、`rag/`、`llm/`、`agent/`（拓扑与换芯见 overview；工具放 `agent/tools/`，勿堆进 api）
+- 支撑：`auth/`（deps/security/seed）、`ingest/`、`rag/`、`llm/`、`agent/`（工具放 `agent/tools/`，勿堆进 api；拓扑见 `project`）
 - SSE 帧：`app.common.sse`（`format_sse` / `format_sse_ping`）；事件语义以 `services/chat.py` 为准
 
 ```python
@@ -38,7 +38,7 @@ from app.services import chat as chat_service
 def chat(...):
     return ok(chat_service.ask(db, user, ...))
 
-# ✅ GOOD：流式（UI 主路径）；建流前校验抛 AppError；流内用独立 Session
+# ✅ GOOD：流式；建流前校验抛 AppError；流内用独立 Session
 @router.post("/api/chat/stream")
 async def chat_stream(...):
     chat_service.validate_ask_preflight(...)
@@ -54,8 +54,8 @@ async def chat_stream(...):
 
 ## 对话双路径
 
-- `ask` / `POST /api/chat`：同步整包，行为勿随意改
-- `ask_stream` / `POST /api/chat/stream`：须与同步共享会话校验、citations/拒答常量、失败文案
+- `ask`：同步整包，行为勿随意改
+- `ask_stream`：须与同步共享会话校验、citations/拒答常量、失败文案
 - 投研同步：`run_research_graph`；投研流式：`agent.stream.iter_research_stream`（禁止整图阻塞假流式）
 
 ## 配置与启动

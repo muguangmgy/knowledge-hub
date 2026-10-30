@@ -1,4 +1,4 @@
-# Knowledge Hub — 用户 / 角色 / 菜单 RBAC 技术方案设计文档
+﻿# Knowledge Hub — 用户 / 角色 / 菜单 RBAC 技术方案设计文档
 
 - **日期**：2026-10-15
 - **状态**：已实现
@@ -216,7 +216,7 @@ flowchart TD
 
 - **禁止删除** 内置角色 `admin`、`user`
 - `menuIds` 按方案 A：**请求里给什么就存什么**，保存时**不**自动写入祖先 catalog；替换策略为先清该角色旧 `role_menu` 再插入新集合
-- `code` 冲突 → **`40903`（`ROLE_EXISTS`）**，写入 [`errors.py`](../backend/app/common/errors.py)；勿复用文档同名的 `40901`
+- `code` 冲突 → **`40903`（`ROLE_EXISTS`）**，写入 [`errors.py`](../../backend/app/common/errors.py)；勿复用文档同名的 `40901`
 
 ### 5.4 菜单管理 `/api/menus`
 
@@ -247,17 +247,17 @@ flowchart TD
 
 | 文件 / 目录 | 改动 |
 |-------------|------|
-| [`backend/app/models/rbac.py`](../backend/app/models/rbac.py) | 移除 `Permission`、`RolePermission`；新增 `Menu`、`RoleMenu`；保留 `Role`、`UserRole` |
-| [`backend/app/models/__init__.py`](../backend/app/models/__init__.py) | 导出同步 |
-| [`backend/app/auth/seed.py`](../backend/app/auth/seed.py) | 种子菜单树 + `role_menu`；去掉 permission 种子 |
-| [`backend/app/services/auth.py`](../backend/app/services/auth.py) | `/me` 聚合 menus 树，去掉 permissions |
-| [`backend/app/services/user_admin.py`](../backend/app/services/user_admin.py) | 用户 CRUD |
-| [`backend/app/services/role_admin.py`](../backend/app/services/role_admin.py) | 角色 CRUD + 绑菜单 |
-| [`backend/app/services/menu_admin.py`](../backend/app/services/menu_admin.py) · [`menu_tree.py`](../backend/app/services/menu_tree.py) | 菜单树 CRUD / `/me` 闭包 |
-| [`backend/app/api/users.py`](../backend/app/api/users.py)、[`roles.py`](../backend/app/api/roles.py)、[`menus.py`](../backend/app/api/menus.py) | 路由薄封装 |
-| [`backend/app/main.py`](../backend/app/main.py) | `include_router` |
-| [`backend/app/schemas/`](../backend/app/schemas/) | 请求/响应模型 |
-| [`backend/app/common/errors.py`](../backend/app/common/errors.py) | 按需补 `40903` 等 |
+| [`backend/app/models/rbac.py`](../../backend/app/models/rbac.py) | 移除 `Permission`、`RolePermission`；新增 `Menu`、`RoleMenu`；保留 `Role`、`UserRole` |
+| [`backend/app/models/__init__.py`](../../backend/app/models/__init__.py) | 导出同步 |
+| [`backend/app/auth/seed.py`](../../backend/app/auth/seed.py) | 种子菜单树 + `role_menu`；去掉 permission 种子 |
+| [`backend/app/services/auth.py`](../../backend/app/services/auth.py) | `/me` 聚合 menus 树，去掉 permissions |
+| [`backend/app/services/user_admin.py`](../../backend/app/services/user_admin.py) | 用户 CRUD |
+| [`backend/app/services/role_admin.py`](../../backend/app/services/role_admin.py) | 角色 CRUD + 绑菜单 |
+| [`backend/app/services/menu_admin.py`](../../backend/app/services/menu_admin.py) · [`menu_tree.py`](../../backend/app/services/menu_tree.py) | 菜单树 CRUD / `/me` 闭包 |
+| [`backend/app/api/users.py`](../../backend/app/api/users.py)、[`roles.py`](../../backend/app/api/roles.py)、[`menus.py`](../../backend/app/api/menus.py) | 路由薄封装 |
+| [`backend/app/main.py`](../../backend/app/main.py) | `include_router` |
+| [`backend/app/schemas/`](../../backend/app/schemas/) | 请求/响应模型 |
+| [`backend/app/common/errors.py`](../../backend/app/common/errors.py) | 按需补 `40903` 等 |
 
 路由前缀建议：`/api/users`、`/api/roles`、`/api/menus`（与现有 `/api/auth`、`/api/documents` 平级）。
 
@@ -269,14 +269,14 @@ flowchart TD
 
 | 项 | 约定 |
 |----|------|
-| 壳层 | [`layouts/AppLayout.vue`](../frontend/src/layouts/AppLayout.vue)：左侧菜单 + 顶区用户下拉（退出）+ `<RouterView />` |
-| [`App.vue`](../frontend/src/App.vue) | 仅 `<RouterView />` + 登录后补拉 `/me`；Layout 由路由父级挂载 |
+| 壳层 | [`layouts/AppLayout.vue`](../../frontend/src/layouts/AppLayout.vue)：左侧菜单 + 顶区用户下拉（退出）+ `<RouterView />` |
+| [`App.vue`](../../frontend/src/App.vue) | 仅 `<RouterView />` + 登录后补拉 `/me`；Layout 由路由父级挂载 |
 | 顶栏业务链接 | **移除**「知识库问答 / 投研助手 / 文档」；改由侧栏 `el-menu` 根据 `menus` 生成 |
-| 菜单图标 | [`components/system/IconSelect.vue`](../frontend/src/components/system/IconSelect.vue) + [`utils/icons.js`](../frontend/src/utils/icons.js)；`icon` 存 Element Plus Icons 组件名 |
-| 系统管理页 | [`views/system/`](../frontend/src/views/system/)：`UserManageView` / `RoleManageView` / `MenuManageView` |
-| 聊天页内部会话侧栏 | [`ChatWorkspace.vue`](../frontend/src/components/chat/ChatWorkspace.vue) **保留**（会话列表 ≠ 系统菜单） |
+| 菜单图标 | [`components/system/IconSelect.vue`](../../frontend/src/components/system/IconSelect.vue) + [`utils/icons.js`](../../frontend/src/utils/icons.js)；`icon` 存 Element Plus Icons 组件名 |
+| 系统管理页 | [`views/system/`](../../frontend/src/views/system/)：`UserManageView` / `RoleManageView` / `MenuManageView` |
+| 聊天页内部会话侧栏 | [`ChatWorkspace.vue`](../../frontend/src/components/chat/ChatWorkspace.vue) **保留**（会话列表 ≠ 系统菜单） |
 
-侧栏高度与现有 `--topbar-h` 等 token 协调；视觉延续 [`global.css`](../frontend/src/assets/css/global.css)，不另起设计体系。
+侧栏高度与现有 `--topbar-h` 等 token 协调；视觉延续 [`global.css`](../../frontend/src/assets/css/global.css)，不另起设计体系。
 
 ### 7.2 路由
 
@@ -299,7 +299,7 @@ flowchart TD
 
 ### 7.4 Store / API
 
-- [`stores/user.js`](../frontend/src/stores/user.js)：`profile` 含 `menus`；登录后 `loadMe` 驱动侧栏
+- [`stores/user.js`](../../frontend/src/stores/user.js)：`profile` 含 `menus`；登录后 `loadMe` 驱动侧栏
 - 新建 `api/users.js`、`api/roles.js`、`api/menus.js`
 
 ---
@@ -308,11 +308,11 @@ flowchart TD
 
 | 项 | 策略 |
 |----|------|
-| 开发库已有 `sys_permission` / `sys_role_permission` | **可清库**；或跑 [`scripts/migrate_rbac_menu.py`](../scripts/migrate_rbac_menu.py) / 手工 `DROP TABLE` 后重启，依赖 lifespan `create_all` + 新 seed |
+| 开发库已有 `sys_permission` / `sys_role_permission` | **可清库**；或跑 [`scripts/migrate_rbac_menu.py`](../../scripts/migrate_rbac_menu.py) / 手工 `DROP TABLE` 后重启，依赖 lifespan `create_all` + 新 seed |
 | `create_all` | **不会**自动删旧表；必须人工 DROP 或整库重建 |
 | 前端旧 `/me` 读 `permissions` | 改为读 `menus`；无 permissions 字段 |
 | 顶栏入口 | 删除后仅侧栏；书签旧行为依赖侧栏同等 path |
-| 回归脚本 | [`scripts/verify_rbac_menu.py`](../scripts/verify_rbac_menu.py) 冒烟 A1–A8 |
+| 回归脚本 | [`scripts/verify_rbac_menu.py`](../../scripts/verify_rbac_menu.py) 冒烟 A1–A8 |
 
 不提供 Alembic；不写生产灰度迁移脚本（本仓库当前阶段以本地演示为主）。
 

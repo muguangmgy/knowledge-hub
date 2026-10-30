@@ -131,17 +131,16 @@ uv pip install -r requirements.txt
 
 ```
 knowledge-hub/
-├── .docs/
-│   ├── knowledge-qa-design.md
-│   ├── rbac-menu-design.md      # User–Role–Menu 侧栏与系统管理
-│   ├── chat-dual-mode-design.md
-│   ├── chat-sse-design.md
-│   ├── stock-research-agent-design.md
-│   └── phase/
-│       ├── knowledge-qa-phase1-design.md
-│       ├── knowledge-qa-phase2-design.md
-│       ├── knowledge-qa-phase3-design.md
-│       └── knowledge-qa-phase4-design.md
+├── .docs/                       # 业务文档库（非实现依据）
+│   ├── design/                  # 设计规格
+│   │   ├── knowledge-qa-design.md
+│   │   ├── rbac-menu-design.md
+│   │   ├── chat-dual-mode-design.md
+│   │   ├── chat-sse-design.md
+│   │   ├── stock-research-agent-design.md
+│   │   └── phase/               # 分阶段设计（历史）
+│   ├── agents/                  # Agent / Skill 配置
+│   └── templates/               # 文档模板
 ├── .cursor/rules/               # Cursor 约定
 ├── scripts/                     # 仓库根：迁移 + verify_*.py（含 verify_rbac_menu 等）
 ├── backend/

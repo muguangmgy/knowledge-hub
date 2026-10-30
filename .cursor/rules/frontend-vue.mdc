@@ -6,7 +6,7 @@ alwaysApply: false
 
 # Frontend（Vue 3）
 
-目录地图与产品能力见 `project-overview` 和当前代码；本规则只约束**怎么写前端**。不主动对照 `.docs/`。
+产品能力与落点见 `project`；本规则只约束**怎么写前端**。
 
 栈：Vue 3 + Vite + **JavaScript**（非 TS）+ Pinia + Element Plus + Axios（短请求）+ **`fetch` SSE**（问答流）。开发端口 **5173**；`VITE_API_BASE` 默认为空，靠 Vite 把 `/api` 代理到 `127.0.0.1:8000`。`vite.config.js` 中 **`/api/chat/stream` 须写在通用 `/api` 之前**（关缓冲、拉长超时）。
 

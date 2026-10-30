@@ -1,4 +1,4 @@
-# Knowledge Hub — 文档批量导入与批量删除技术方案设计文档
+﻿# Knowledge Hub — 文档批量导入与批量删除技术方案设计文档
 
 - **日期**：2026-10-18
 - **状态**：已确认，待实现
@@ -85,7 +85,7 @@ flowchart TD
 
 ## 4. 后端行为
 
-不新开目录。路由写在 [`backend/app/api/documents.py`](../backend/app/api/documents.py)，业务写在 [`backend/app/services/ingest.py`](../backend/app/services/ingest.py)。`POST /api/documents/batch` 与 `POST /api/documents/batch-delete` 必须注册在 `/{document_id}` 之前。
+不新开目录。路由写在 [`backend/app/api/documents.py`](../../backend/app/api/documents.py)，业务写在 [`backend/app/services/ingest.py`](../../backend/app/services/ingest.py)。`POST /api/documents/batch` 与 `POST /api/documents/batch-delete` 必须注册在 `/{document_id}` 之前。
 
 ### 4.1 单文件
 
@@ -209,7 +209,7 @@ flowchart TD
 
 ## 6. 前端交互
 
-改动限于 [`frontend/src/components/ingest/UploadPanel.vue`](../frontend/src/components/ingest/UploadPanel.vue)、[`frontend/src/views/documents/DocumentListView.vue`](../frontend/src/views/documents/DocumentListView.vue)、[`frontend/src/api/documents.js`](../frontend/src/api/documents.js)、[`frontend/src/stores/document.js`](../frontend/src/stores/document.js)。
+改动限于 [`frontend/src/components/ingest/UploadPanel.vue`](../../frontend/src/components/ingest/UploadPanel.vue)、[`frontend/src/views/documents/DocumentListView.vue`](../../frontend/src/views/documents/DocumentListView.vue)、[`frontend/src/api/documents.js`](../../frontend/src/api/documents.js)、[`frontend/src/stores/document.js`](../../frontend/src/stores/document.js)。
 
 ### 6.1 上传
 
