@@ -11,7 +11,7 @@
 
 | 层 | 技术 |
 |----|------|
-| 前端 | Vue 3 + Vite + Pinia + Element Plus + Axios（短请求）+ `fetch` SSE（问答流） |
+| 前端 | Vue 3 + Vite + **JavaScript**（非 TS）+ Pinia + Element Plus + Axios（短请求）+ `fetch` SSE（问答流） |
 | 后端 | FastAPI + SQLAlchemy + MySQL |
 | 向量 / 模型 | Chroma（本地）+ 内存 BM25 + SiliconFlow（Embedding / Rerank / Chat） |
 | 投研 | LangGraph + 腾讯行情/资讯 + AKShare 财务要点 + 新浪代码表（可选 Redis）+ SMTP |
@@ -80,7 +80,7 @@ npm run dev
 
 ```
 knowledge-hub/
-├── .docs/                         # 主规格 + phase + 双模式 / 投研 / SSE / RBAC
+├── .docs/                         # 业务文档库：design / agents / templates
 ├── .cursor/rules/                 # Cursor 约定
 ├── scripts/                       # 迁移 + verify_*.py（仓库根）
 ├── backend/
@@ -107,14 +107,15 @@ knowledge-hub/
     └── vite.config.js             # /api 与 /api/chat/stream 代理
 ```
 
-规格详见 `.docs/`：
+规格详见 `.docs/design/`（历史设计，非实现依据；以代码为准）：
 
-- [主规格](.docs/knowledge-qa-design.md)
-- [菜单型 RBAC](.docs/rbac-menu-design.md)
-- [双模式外壳](.docs/chat-dual-mode-design.md)
-- [投研 Multi-Agent](.docs/stock-research-agent-design.md)
-- [投研三档路由](.docs/research-tri-route-design.md)
-- [对话 SSE](.docs/chat-sse-design.md)
+- [主规格](.docs/design/knowledge-qa-design.md)
+- [菜单型 RBAC](.docs/design/rbac-menu-design.md)
+- [双模式外壳](.docs/design/chat-dual-mode-design.md)
+- [投研 Multi-Agent](.docs/design/stock-research-agent-design.md)
+- [投研三档路由](.docs/design/research-tri-route-design.md)
+- [对话 SSE](.docs/design/chat-sse-design.md)
+- [文档批量](.docs/design/document-batch-design.md)
 
 ## 常用配置（`backend/.env`）
 

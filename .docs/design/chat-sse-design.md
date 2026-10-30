@@ -1,4 +1,4 @@
-# Knowledge Hub — 对话 SSE 流式输出技术方案设计文档
+﻿# Knowledge Hub — 对话 SSE 流式输出技术方案设计文档
 
 - **日期**：2026-10-15
 - **状态**：已实现
@@ -187,12 +187,12 @@ flowchart TD
 
 | 模块 | 职责 |
 |------|------|
-| [`backend/app/llm/client.py`](../backend/app/llm/client.py) | 新增 `chat_completion_stream(messages) -> Iterator[str]`；既有 `chat_completion` 保持非流式 |
-| [`backend/app/services/qa.py`](../backend/app/services/qa.py) | **必做**流式生成入口：prompt 拼装与 `generate_answer` **同源**（抽公共拼装，禁止两套 prompt 漂移）；底层调 `chat_completion_stream` |
-| [`backend/app/services/chat.py`](../backend/app/services/chat.py) | `ask_stream`：复用 mode 规范化、会话校验、user 落库、`build_citations` / 拒答常量；按 mode yield 事件；按 §6 落库 |
-| [`backend/app/api/chat.py`](../backend/app/api/chat.py) | `POST /api/chat/stream` → `StreamingResponse`；DB session 在生成器生命周期内持有；感知客户端断开（与 Abort 同等取消） |
-| [`backend/app/agent/graph.py`](../backend/app/agent/graph.py) 等 | 流式执行路径见 §5.1；Writer 接 LLM stream |
-| [`backend/app/agent/agents/writer.py`](../backend/app/agent/agents/writer.py) | 有标的且未超时：流式写出；超时/无标的硬编码分支一次 `delta` |
+| [`backend/app/llm/client.py`](../../backend/app/llm/client.py) | 新增 `chat_completion_stream(messages) -> Iterator[str]`；既有 `chat_completion` 保持非流式 |
+| [`backend/app/services/qa.py`](../../backend/app/services/qa.py) | **必做**流式生成入口：prompt 拼装与 `generate_answer` **同源**（抽公共拼装，禁止两套 prompt 漂移）；底层调 `chat_completion_stream` |
+| [`backend/app/services/chat.py`](../../backend/app/services/chat.py) | `ask_stream`：复用 mode 规范化、会话校验、user 落库、`build_citations` / 拒答常量；按 mode yield 事件；按 §6 落库 |
+| [`backend/app/api/chat.py`](../../backend/app/api/chat.py) | `POST /api/chat/stream` → `StreamingResponse`；DB session 在生成器生命周期内持有；感知客户端断开（与 Abort 同等取消） |
+| [`backend/app/agent/graph.py`](../../backend/app/agent/graph.py) 等 | 流式执行路径见 §5.1；Writer 接 LLM stream |
+| [`backend/app/agent/agents/writer.py`](../../backend/app/agent/agents/writer.py) | 有标的且未超时：流式写出；超时/无标的硬编码分支一次 `delta` |
 
 同步路径 `ask` / `POST /api/chat`：**禁止**借机改业务语义；与 stream **必须**共享：「建会话 + 写 user」、citations 构建、拒答常量、失败文案，避免双路径漂移。日志仍遵守现网约定：不打 Token、不打长正文。
 
@@ -286,9 +286,9 @@ flowchart TD
 
 | 文件 | 改动 |
 |------|------|
-| [`frontend/src/api/chat.js`](../frontend/src/api/chat.js) | 新增 `askChatStream(payload, handlers)`；保留 `askChat` 供脚本/兼容 |
-| [`frontend/src/stores/createChatStore.js`](../frontend/src/stores/createChatStore.js) | `ask` 改走 stream：乐观插入 user → 插入空 assistant → 累加 `delta`；持有 `AbortController`；`stopAsking`；`asking` 期间禁止第二条 stream |
-| [`frontend/src/components/chat/ChatInput.vue`](../frontend/src/components/chat/ChatInput.vue) | 发送中展示「停止」；emit 停止事件 |
+| [`frontend/src/api/chat.js`](../../frontend/src/api/chat.js) | 新增 `askChatStream(payload, handlers)`；保留 `askChat` 供脚本/兼容 |
+| [`frontend/src/stores/createChatStore.js`](../../frontend/src/stores/createChatStore.js) | `ask` 改走 stream：乐观插入 user → 插入空 assistant → 累加 `delta`；持有 `AbortController`；`stopAsking`；`asking` 期间禁止第二条 stream |
+| [`frontend/src/components/chat/ChatInput.vue`](../../frontend/src/components/chat/ChatInput.vue) | 发送中展示「停止」；emit 停止事件 |
 | ChatWorkspace / 各 Chat View | 展示当前 `stage` 短文案（投研尤其需要）；Markdown 随增量更新（注意性能，可节流） |
 
 **交互约定**：
@@ -296,7 +296,7 @@ flowchart TD
 - 两套 Store（rag / direct）均切 stream，禁止 UI 主路径再调同步 `askChat`。
 - 收到 `citations` 后立即渲染引用区；`done` 到达后用服务端 `answer` 覆盖本地拼接（纠偏），写入 `citations` / `rejected` / `conversationId` / `messageId`。
 - 取消或断线：收回本轮 assistant 气泡；刷新后可见孤立 user（预期）。
-- 鉴权：从 `localStorage` 取 Token 写入 `Authorization`（与 [`http.js`](../frontend/src/api/http.js) 一致）；建流前 HTTP 错误体解析与现网 Axios 拦截语义对齐（如 `40101` 清 Token）。
+- 鉴权：从 `localStorage` 取 Token 写入 `Authorization`（与 [`http.js`](../../frontend/src/api/http.js) 一致）；建流前 HTTP 错误体解析与现网 Axios 拦截语义对齐（如 `40101` 清 Token）。
 
 ---
 
